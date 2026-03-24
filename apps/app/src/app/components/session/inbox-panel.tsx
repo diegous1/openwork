@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import { Download, RefreshCw, UploadCloud } from "lucide-solid";
 
+import { t } from "../../../i18n";
 import { getOpenWorkDeployment } from "../../lib/openwork-deployment";
 import type { OpenworkInboxItem, OpenworkServerClient } from "../../lib/openwork-server";
 import WebUnavailableSurface from "../web-unavailable-surface";
@@ -48,7 +49,7 @@ export default function InboxPanel(props: InboxPanelProps) {
   });
 
   const connected = createMemo(() => Boolean(props.client && (props.workspaceId ?? "").trim()));
-  const helperText = "Share files with this worker from the app.";
+  const helperText = t("session.inbox_share_hint");
 
   const visibleItems = createMemo(() => (items() ?? []).slice(0, maxPreview()));
   const hiddenCount = createMemo(() => Math.max(0, (items() ?? []).length - visibleItems().length));
@@ -72,7 +73,7 @@ export default function InboxPanel(props: InboxPanelProps) {
       setItems(result.items ?? []);
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Failed to load shared folder";
+        err instanceof Error ? err.message : t("session.inbox_load_failed");
       setError(message);
       setItems([]);
     } finally {
@@ -84,7 +85,7 @@ export default function InboxPanel(props: InboxPanelProps) {
     const client = props.client;
     const workspaceId = (props.workspaceId ?? "").trim();
     if (!client || !workspaceId) {
-      toast("Connect to a worker to upload files to the shared folder.");
+      toast(t("session.inbox_connect_to_upload"));
       return;
     }
     if (!files.length) return;
@@ -93,15 +94,15 @@ export default function InboxPanel(props: InboxPanelProps) {
     setError(null);
     try {
       const label = files.length === 1 ? files[0]?.name ?? "file" : `${files.length} files`;
-      toast(`Uploading ${label}...`);
+      toast(t("session.inbox_uploading").replace("{label}", label));
       for (const file of files) {
         await client.uploadInbox(workspaceId, file);
       }
-      toast("Uploaded to the shared folder.");
+      toast(t("session.inbox_uploaded"));
       await refresh();
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Shared folder upload failed";
+        err instanceof Error ? err.message : t("session.inbox_upload_failed");
       setError(message);
       toast(message);
     } finally {
@@ -115,7 +116,7 @@ export default function InboxPanel(props: InboxPanelProps) {
       await navigator.clipboard.writeText(path);
       toast(`Copied: ${path}`);
     } catch {
-      toast("Copy failed. Your browser may block clipboard access.");
+      toast(t("session.inbox_copy_failed"));
     }
   };
 
@@ -123,12 +124,12 @@ export default function InboxPanel(props: InboxPanelProps) {
     const client = props.client;
     const workspaceId = (props.workspaceId ?? "").trim();
     if (!client || !workspaceId) {
-      toast("Connect to a worker to download shared files.");
+      toast(t("session.inbox_connect_to_download"));
       return;
     }
     const id = String(item.id ?? "").trim();
     if (!id) {
-      toast("Missing shared file id.");
+      toast(t("session.inbox_missing_file_id"));
       return;
     }
 
@@ -144,7 +145,7 @@ export default function InboxPanel(props: InboxPanelProps) {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Download failed";
+      const message = err instanceof Error ? err.message : t("session.inbox_download_failed");
       toast(message);
     }
   };
@@ -160,7 +161,7 @@ export default function InboxPanel(props: InboxPanelProps) {
     <WebUnavailableSurface unavailable={webDeployment()} compact>
       <div id={props.id}>
         <div class="flex items-center justify-between px-2 mb-3">
-          <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">Shared folder</span>
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">{t("session.inbox_shared_folder")}</span>
           <div class="flex items-center gap-2">
             <Show when={(items() ?? []).length > 0}>
               <span class="text-[11px] font-medium bg-gray-4/60 text-gray-10 px-1.5 rounded">
@@ -171,8 +172,8 @@ export default function InboxPanel(props: InboxPanelProps) {
               type="button"
               class="rounded-md p-1 text-gray-9 hover:text-gray-11 hover:bg-gray-3 transition-colors"
               onClick={() => void refresh()}
-              title="Refresh shared folder"
-              aria-label="Refresh shared folder"
+              title={t("session.inbox_refresh")}
+              aria-label={t("session.inbox_refresh")}
               disabled={!connected() || loading()}
             >
               <RefreshCw size={14} class={loading() ? "animate-spin" : ""} />
@@ -214,12 +215,12 @@ export default function InboxPanel(props: InboxPanelProps) {
             if (files.length) void uploadFiles(files);
           }}
           disabled={uploading()}
-             title={connected() ? "Drop files here to upload" : "Connect to a worker to upload"}
+             title={connected() ? t("session.inbox_drop_to_upload") : t("session.inbox_connect_upload")}
           >
           <div class="flex flex-col items-center justify-center text-center">
             <UploadCloud size={18} class="text-gray-9 mb-2" />
             <span class="text-[13px] font-medium text-gray-11">
-              {uploading() ? "Uploading..." : "Drop files or click to upload"}
+              {uploading() ? t("session.inbox_uploading_label") : t("session.inbox_drop_or_click")}
             </span>
             <span class="mt-0.5 text-[11px] text-gray-9">{helperText}</span>
           </div>
@@ -234,8 +235,8 @@ export default function InboxPanel(props: InboxPanelProps) {
             when={visibleItems().length > 0}
             fallback={
               <div class="text-xs text-gray-10 px-1 py-1">
-                <Show when={connected()} fallback={"Connect to see shared files."}>
-                  No shared files yet.
+                <Show when={connected()} fallback={t("session.inbox_connect_to_see")}>
+                  {t("session.inbox_no_files")}
                 </Show>
               </div>
             }
@@ -253,8 +254,8 @@ export default function InboxPanel(props: InboxPanelProps) {
                       type="button"
                       class="min-w-0 flex-1 text-left"
                       onClick={() => void copyPath(item)}
-                      title={rel() ? `Copy ${INBOX_PREFIX}${rel()}` : "Copy shared folder path"}
-                      aria-label={rel() ? `Copy ${INBOX_PREFIX}${rel()}` : "Copy shared folder path"}
+                      title={rel() ? `${t("session.inbox_copy_path")}: ${INBOX_PREFIX}${rel()}` : t("session.inbox_copy_path")}
+                      aria-label={rel() ? `${t("session.inbox_copy_path")}: ${INBOX_PREFIX}${rel()}` : t("session.inbox_copy_path")}
                       disabled={!connected()}
                     >
                       <div class="truncate text-xs font-medium text-gray-11">{name()}</div>
@@ -275,8 +276,8 @@ export default function InboxPanel(props: InboxPanelProps) {
                       type="button"
                       class="shrink-0 rounded-md p-1 text-gray-9 opacity-0 group-hover:opacity-100 hover:text-gray-11 hover:bg-gray-3"
                       onClick={() => void downloadItem(item)}
-                      title="Download"
-                      aria-label="Download"
+                      title={t("session.inbox_download")}
+                      aria-label={t("session.inbox_download")}
                       disabled={!connected()}
                     >
                       <Download size={14} />
@@ -288,7 +289,7 @@ export default function InboxPanel(props: InboxPanelProps) {
           </Show>
 
           <Show when={hiddenCount() > 0}>
-            <div class="text-[11px] text-gray-10 px-1 py-1">Showing first {maxPreview()}.</div>
+            <div class="text-[11px] text-gray-10 px-1 py-1">{t("session.inbox_showing_first").replace("{count}", String(maxPreview()))}</div>
           </Show>
         </div>
       </div>
