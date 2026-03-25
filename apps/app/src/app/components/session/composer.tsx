@@ -1883,14 +1883,14 @@ export default function Composer(props: ComposerProps) {
               <Show when={props.agentPickerOpen}>
                 <div class="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                   <div class="border-b border-dls-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                    Agent
+                    {translate("session.agent_label")}
                   </div>
 
                   <div class="p-2 space-y-1 max-h-64 overflow-y-auto" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                     <Show
                       when={!props.agentPickerBusy}
                       fallback={
-                        <div class="px-3 py-2 text-xs text-gray-10">Loading agents...</div>
+                        <div class="px-3 py-2 text-xs text-gray-10">{translate("session.loading_agents")}</div>
                       }
                     >
                       <Show when={!props.agentPickerError}>
@@ -1905,7 +1905,7 @@ export default function Composer(props: ComposerProps) {
                             props.onSelectAgent(null);
                           }}
                         >
-                          <span>Default agent</span>
+                          <span>{translate("session.default_agent")}</span>
                           <Show when={!props.selectedAgent}>
                             <Check size={14} class="text-gray-10" />
                           </Show>

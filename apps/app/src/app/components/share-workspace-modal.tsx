@@ -340,8 +340,8 @@ export default function ShareWorkspaceModal(props: {
                   <div class="flex items-center gap-2 min-w-0">
                     <MessageSquare size={16} class="text-gray-9 shrink-0" />
                     <div class="min-w-0">
-                      <h4 class="text-[13px] font-medium text-dls-text">Connect messaging</h4>
-                      <p class="text-[12px] text-gray-10 mt-0.5 truncate">Use this workspace from Slack, Telegram, and others.</p>
+                      <h4 class="text-[13px] font-medium text-dls-text">{translate("share.connect_messaging_title")}</h4>
+                      <p class="text-[12px] text-gray-10 mt-0.5 truncate">{translate("share.connect_messaging_desc")}</p>
                     </div>
                   </div>
                   <button
@@ -349,7 +349,7 @@ export default function ShareWorkspaceModal(props: {
                     disabled={!props.onOpenBots}
                     class="px-3 py-1.5 bg-gray-2 hover:bg-gray-3 rounded-md text-[12px] font-medium text-dls-text transition-colors disabled:opacity-50"
                   >
-                    Setup
+                    {translate("share.setup_button")}
                   </button>
                 </div>
 
@@ -368,7 +368,7 @@ export default function ShareWorkspaceModal(props: {
                         onClick={() => setCollaboratorExpanded((value) => !value)}
                         aria-expanded={collaboratorExpanded()}
                       >
-                        <span>Optional collaborator access</span>
+                        <span>{translate("share.collaborator_access")}</span>
                         <ChevronDown
                           size={13}
                           class={`shrink-0 transition-transform ${collaboratorExpanded() ? "rotate-180" : ""}`}
@@ -376,7 +376,7 @@ export default function ShareWorkspaceModal(props: {
                       </button>
                       <Show when={collaboratorExpanded()}>
                         <div class="mt-3 rounded-[20px] border border-dls-border bg-gray-2/30 px-3 py-3">
-                          <div class="mb-2 text-[11px] text-gray-9">Routine access without permission approvals.</div>
+                          <div class="mb-2 text-[11px] text-gray-9">{translate("share.collaborator_desc")}</div>
                           {renderCredentialField(field(), () => 0, "collaborator")}
                         </div>
                       </Show>
