@@ -1169,7 +1169,6 @@ export default {
   "session.agent_label": "Agente",
   "session.loading_agents": "Carregando agentes...",
   "session.default_agent": "Agente padrão",
-  "session.insert_prompt": "Inserir prompt",
   "session.promo_try_it": "Experimente: configurar meu CRM no Notion",
   "session.copy_message": "Copiar mensagem",
   "session.stopping_run": "Parando a execução...",
