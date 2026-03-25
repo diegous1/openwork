@@ -4,6 +4,9 @@ import type { ProviderListItem } from "../types";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { isTauriRuntime } from "../utils";
 import { compareProviders } from "../utils/providers";
+import { t, currentLocale } from "../../i18n";
+
+const translate = (key: string) => t(key, currentLocale());
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -126,7 +129,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   });
 
   const methodLabel = (method: ProviderAuthMethod) =>
-    method.label || (method.type === "oauth" ? "OAuth" : "API key");
+    method.label || (method.type === "oauth" ? translate("provider.oauth_method") : translate("provider.api_key_method"));
 
   const actionDisabled = () => props.loading || props.submitting;
 
@@ -595,14 +598,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         <div class="bg-gray-2 border border-gray-6/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
           <div class="px-6 pt-6 pb-4 border-b border-gray-6/50 flex items-start justify-between gap-4">
             <div>
-              <h3 class="text-lg font-semibold text-gray-12">Connect providers</h3>
-              <p class="text-sm text-gray-11 mt-1">Sign in to services you want OpenWork to use.</p>
+              <h3 class="text-lg font-semibold text-gray-12">{translate("provider.connect_title")}</h3>
+              <p class="text-sm text-gray-11 mt-1">{translate("provider.connect_desc")}</p>
             </div>
             <Button
               variant="ghost"
               class="!p-2 rounded-full"
               onClick={handleClose}
-              aria-label="Close"
+              aria-label={translate("provider.close")}
             >
               <X size={16} />
             </Button>
@@ -615,7 +618,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 fallback={
                   <Show when={props.loading}>
                     <div class="rounded-xl border border-gray-6 bg-gray-1/60 px-4 py-3 text-sm text-gray-10 animate-pulse">
-                      Loading providers...
+                      {translate("provider.loading")}
                     </div>
                   </Show>
                 }
@@ -635,7 +638,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       <input
                         ref={searchInputEl}
                         type="text"
-                        placeholder="Filter providers by name or ID"
+                        placeholder={translate("provider.filter_placeholder")}
                         value={searchQuery()}
                         onInput={(event) => {
                           setSearchQuery(event.currentTarget.value);
@@ -653,7 +656,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       when={filteredEntries().length}
                       fallback={
                         <div class="text-sm text-gray-10 pt-2">
-                          {entries().length ? "No providers match your search." : "No providers available."}
+                          {entries().length ? translate("provider.no_match") : translate("provider.none_available")}
                         </div>
                       }
                     >
@@ -706,7 +709,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                                     >
                                       <div class="flex items-center gap-1 text-[11px] font-medium text-green-11 bg-green-4/20 border border-green-5/30 px-1.5 py-0.5 rounded-md">
                                         <CheckCircle2 size={12} strokeWidth={2.5} />
-                                        Connected
+                                        {translate("provider.connected")}
                                       </div>
                                     </Show>
                                   </div>
@@ -735,7 +738,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       </For>
                     </Show>
 
-                    <div class="text-[11px] text-gray-9">Arrow keys to navigate, Enter to select.</div>
+                    <div class="text-[11px] text-gray-9">{translate("provider.keyboard_hint")}</div>
                   </div>
                 </Show>
 
@@ -744,10 +747,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     <div class="flex items-center justify-between gap-4">
                       <div>
                         <div class="text-sm font-medium text-gray-12">{selectedEntry()!.name}</div>
-                        <div class="text-xs text-gray-10 mt-1">Choose how you'd like to connect.</div>
+                        <div class="text-xs text-gray-10 mt-1">{translate("provider.choose_connect")}</div>
                       </div>
                       <Button variant="ghost" onClick={handleBack} disabled={actionDisabled()}>
-                        Back
+                        {translate("provider.back")}
                       </Button>
                     </div>
                     <div class="grid gap-2">
