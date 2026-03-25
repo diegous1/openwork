@@ -301,8 +301,8 @@ export default function ShareWorkspaceModal(props: {
                   <div class="flex items-center gap-2 mb-1">
                     <FolderCode size={16} class="text-gray-9 shrink-0" />
                     <div class="flex-1">
-                      <h3 class="text-[13px] font-medium text-dls-text">Workspace template</h3>
-                      <p class="text-[12px] text-gray-10 leading-tight mt-0.5">Share the core setup and workspace defaults.</p>
+                      <h3 class="text-[13px] font-medium text-dls-text">{translate("share.template_section_title")}</h3>
+                      <p class="text-[12px] text-gray-10 leading-tight mt-0.5">{translate("share.template_section_desc")}</p>
                     </div>
                   </div>
 
@@ -320,8 +320,8 @@ export default function ShareWorkspaceModal(props: {
                     "share-workspace-profile",
                     props.onShareWorkspaceProfile,
                     props.shareWorkspaceProfileBusy,
-                    "Create Template Link",
-                    "Regenerate Link",
+                    translate("share.create_template_link"),
+                    translate("share.regenerate_link"),
                     props.onShareWorkspaceProfile,
                     props.shareWorkspaceProfileDisabledReason,
                   )}
@@ -333,7 +333,7 @@ export default function ShareWorkspaceModal(props: {
               <div class="space-y-6 pt-4 animate-in fade-in slide-in-from-right-4 duration-300">
                 <div class="rounded-md border border-amber-6/40 bg-amber-3/30 px-3 py-2 text-[12px] text-amber-11 flex items-start gap-2">
                   <span class="mt-0.5">⚠️</span>
-                  <span class="leading-relaxed">Share with trusted people only. These credentials grant live access to this workspace.</span>
+                  <span class="leading-relaxed">{translate("share.live_access_warning")}</span>
                 </div>
 
                 <div class="flex items-center justify-between gap-3 rounded-[20px] border border-dls-border bg-gray-2/30 px-3 py-3">

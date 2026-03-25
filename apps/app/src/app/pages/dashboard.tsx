@@ -74,6 +74,7 @@ import {
   Zap,
 } from "lucide-solid";
 import type { Language } from "../../i18n";
+import { t, currentLocale } from "../../i18n";
 
 export type DashboardViewProps = {
   tab: DashboardTab;
@@ -373,6 +374,7 @@ type SkillsSetBundleV1 = {
 };
 
 export default function DashboardView(props: DashboardViewProps) {
+  const translate = (key: string) => t(key, currentLocale());
   const platform = usePlatform();
   const webDeployment = createMemo(() => getOpenWorkDeployment() === "web");
   const [mobileRightSidebarOpen, setMobileRightSidebarOpen] = createSignal(false);
@@ -1132,8 +1134,8 @@ export default function DashboardView(props: DashboardViewProps) {
         <div
           class="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 md:block"
           onPointerDown={startLeftSidebarResize}
-          title="Resize workspace column"
-          aria-label="Resize workspace column"
+          title={translate("session.resize_workspace_col")}
+          aria-label={translate("session.resize_workspace_col")}
         />
 
       </aside>
@@ -1182,8 +1184,8 @@ export default function DashboardView(props: DashboardViewProps) {
               type="button"
               class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:hidden"
               onClick={() => setMobileRightSidebarOpen(true)}
-              title="Open sidebar"
-              aria-label="Open sidebar"
+              title={translate("session.open_sidebar")}
+              aria-label={translate("session.open_sidebar")}
             >
               <Menu size={16} />
             </button>

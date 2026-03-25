@@ -1766,7 +1766,7 @@ export default function Composer(props: ComposerProps) {
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
                     <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
-                        Describe your task...
+                        {translate("session.task_placeholder")}
                     </div>
                   </Show>
                     <div
@@ -1839,10 +1839,10 @@ export default function Composer(props: ComposerProps) {
                                 ? "bg-gray-4 text-gray-10"
                                 : "bg-dls-accent text-white hover:bg-[var(--dls-accent-hover)]"
                                 }`}
-                              title="Run task"
+                              title={translate("session.run_task")}
                             >
                               <ArrowUp size={15} />
-                              <span>Run task</span>
+                              <span>{translate("session.run_task")}</span>
                             </button>
                           }
                         >
@@ -1850,10 +1850,10 @@ export default function Composer(props: ComposerProps) {
                             type="button"
                             onClick={() => props.onStop()}
                             class="inline-flex items-center gap-2 rounded-full bg-gray-12 px-4 py-2 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
-                            title="Stop"
+                            title={translate("session.stop")}
                           >
                             <Square size={12} fill="currentColor" />
-                            <span>Stop</span>
+                            <span>{translate("session.stop")}</span>
                           </button>
                         </Show>
                       </div>
@@ -1874,7 +1874,7 @@ export default function Composer(props: ComposerProps) {
                 onClick={props.onToggleAgentPicker}
                 disabled={props.busy}
                 aria-expanded={props.agentPickerOpen}
-                title="Agent"
+                title={translate("session.agent_label")}
               >
                 <span class="max-w-[140px] truncate">{props.agentLabel}</span>
                 <ChevronDown size={13} />
