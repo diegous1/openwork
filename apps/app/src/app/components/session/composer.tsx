@@ -6,6 +6,7 @@ import { ArrowUp, AtSign, Check, ChevronDown, File as FileIcon, Paperclip, Squar
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { t, currentLocale } from "../../../i18n";
 
 type MentionOption = {
   id: string;
@@ -442,6 +443,7 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 };
 
 export default function Composer(props: ComposerProps) {
+  const translate = (key: string) => t(key, currentLocale());
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let inboxFileInputRef: HTMLInputElement | undefined;

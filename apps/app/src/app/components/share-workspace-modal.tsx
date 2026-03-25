@@ -138,7 +138,7 @@ export default function ShareWorkspaceModal(props: {
                 }
                 disabled={!field.value}
                 class="p-1.5 text-gray-10 hover:text-gray-12 hover:bg-gray-3 rounded-md transition-colors disabled:opacity-50"
-                title={revealed() ? "Hide password" : "Reveal password"}
+                title={revealed() ? translate("share.hide_password") : translate("share.reveal_password")}
               >
                 <Show when={revealed()} fallback={<Eye size={14} />}>
                   <EyeOff size={14} />
@@ -149,7 +149,7 @@ export default function ShareWorkspaceModal(props: {
               onClick={() => handleCopy(field.value, key())}
               disabled={!field.value}
               class="p-1.5 text-gray-10 hover:text-gray-12 hover:bg-gray-3 rounded-md transition-colors disabled:opacity-50"
-              title="Copy"
+              title={translate("share.copy")}
             >
               <Show when={copiedKey() === key()} fallback={<Copy size={14} />}>
                 <Check size={14} class="text-emerald-10" />
@@ -182,7 +182,7 @@ export default function ShareWorkspaceModal(props: {
           disabled={Boolean(disabledReason) || !createAction || busy}
           class="mt-3 w-full rounded-full bg-dls-text px-5 py-3 text-[13px] font-medium text-dls-surface shadow-sm transition-colors hover:bg-gray-12 active:scale-[0.99] disabled:opacity-50"
         >
-          {busy ? "Publishing..." : createLabel}
+          {busy ? translate("share.publishing") : createLabel}
         </button>
       }
     >
@@ -196,7 +196,7 @@ export default function ShareWorkspaceModal(props: {
         <button
           onClick={() => handleCopy(value ?? "", copyKey)}
           class="p-1.5 hover:bg-gray-3 text-gray-11 hover:text-gray-12 rounded-md transition-colors"
-          title="Copy link"
+          title={translate("share.copy_link")}
         >
           <Show when={copiedKey() === copyKey} fallback={<Copy size={14} />}>
             <Check size={14} class="text-emerald-10" />
@@ -208,7 +208,7 @@ export default function ShareWorkspaceModal(props: {
         disabled={busy}
         class="mt-3 w-full rounded-full bg-gray-2 px-4 py-2 text-[12px] font-medium text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
       >
-        {busy ? "Publishing..." : regenerateLabel}
+        {busy ? translate("share.publishing") : regenerateLabel}
       </button>
     </Show>
   );
@@ -225,8 +225,8 @@ export default function ShareWorkspaceModal(props: {
             <button
               onClick={props.onClose}
               class="absolute top-3 right-3 p-1 text-gray-9 hover:text-gray-12 hover:bg-gray-3 rounded-md transition-colors"
-              aria-label="Close"
-              title="Close"
+              aria-label={translate("share.close")}
+              title={translate("share.close")}
             >
               <X size={16} />
             </button>
@@ -235,8 +235,8 @@ export default function ShareWorkspaceModal(props: {
               <button
                 onClick={() => setActiveView("chooser")}
                 class="absolute top-3 left-3 p-1 text-gray-9 hover:text-gray-12 hover:bg-gray-3 rounded-md transition-colors"
-                aria-label="Back"
-                title="Back to share options"
+                aria-label={translate("share.back")}
+                title={translate("share.back_to_options")}
               >
                 <ArrowLeft size={16} />
               </button>
@@ -246,8 +246,8 @@ export default function ShareWorkspaceModal(props: {
               <div class="min-w-0">
                 <h2 class="text-[14px] font-medium text-dls-text tracking-tight truncate">
                   <Show when={activeView() === "chooser"}>{title()}</Show>
-                  <Show when={activeView() === "template"}>Share a template</Show>
-                  <Show when={activeView() === "access"}>Access workspace remotely</Show>
+                  <Show when={activeView() === "template"}>{translate("share.tab_template")}</Show>
+                  <Show when={activeView() === "access"}>{translate("share.tab_remote")}</Show>
                 </h2>
                 <div class="mt-0.5 text-[12px] text-gray-10 truncate">{props.workspaceName}</div>
               </div>
