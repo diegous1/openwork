@@ -1,5 +1,6 @@
 import { Show, createEffect, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
+import { t, currentLocale } from "../../i18n";
 
 type MobileSidebarDrawerProps = {
   open: boolean;
@@ -8,6 +9,7 @@ type MobileSidebarDrawerProps = {
 };
 
 export default function MobileSidebarDrawer(props: MobileSidebarDrawerProps) {
+  const translate = (key: string) => t(key, currentLocale());
   createEffect(() => {
     if (!props.open || typeof window === "undefined" || typeof document === "undefined") return;
 
@@ -35,7 +37,7 @@ export default function MobileSidebarDrawer(props: MobileSidebarDrawerProps) {
           type="button"
           class="absolute inset-0 bg-gray-1/60 backdrop-blur-sm"
           onClick={props.onClose}
-          aria-label="Close sidebar"
+          aria-label={translate("session.close_sidebar")}
         />
         <div class="absolute inset-y-0 right-0 w-[min(360px,calc(100vw-20px))] max-w-full border-l border-dls-border bg-dls-sidebar p-3 shadow-2xl">
           {props.children}

@@ -266,9 +266,9 @@ export default function ShareWorkspaceModal(props: {
                     <Rocket size={18} />
                   </div>
                   <div class="flex-1">
-                    <h3 class="text-[13px] font-medium text-dls-text">Share a template</h3>
+                    <h3 class="text-[13px] font-medium text-dls-text">{translate("share.tab_template")}</h3>
                     <p class="text-[12px] text-gray-10 leading-snug mt-0.5 pr-4">
-                      Share your setup and defaults so someone else can start from the same environment.
+                      {translate("share.template_desc")}
                     </p>
                   </div>
                 </button>
@@ -282,9 +282,9 @@ export default function ShareWorkspaceModal(props: {
                     <MonitorUp size={18} />
                   </div>
                   <div class="flex-1">
-                    <h3 class="text-[13px] font-medium text-dls-text">Access workspace remotely</h3>
+                    <h3 class="text-[13px] font-medium text-dls-text">{translate("share.tab_remote")}</h3>
                     <p class="text-[12px] text-gray-10 leading-snug mt-0.5 pr-4">
-                      Copy the connection details needed to reach this live workspace from another machine or messaging surface.
+                      {translate("share.access_section_desc")}
                     </p>
                   </div>
                 </button>
@@ -294,7 +294,7 @@ export default function ShareWorkspaceModal(props: {
             <Show when={activeView() === "template"}>
               <div class="space-y-6 pt-4 animate-in fade-in slide-in-from-right-4 duration-300">
                 <div class="text-[12px] text-gray-10">
-                  Share a reusable setup without granting live access to this running workspace.
+                  {translate("share.reusable_desc")}
                 </div>
 
                 <div class="space-y-3">

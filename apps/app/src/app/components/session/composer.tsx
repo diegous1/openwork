@@ -1591,7 +1591,7 @@ export default function Composer(props: ComposerProps) {
                 <div class="max-h-64 overflow-y-auto bg-dls-surface p-2" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                   <Show
                     when={mentionVisible().length}
-                    fallback={<div class="px-3 py-2 text-xs text-gray-10">No matches found.</div>}
+                    fallback={<div class="px-3 py-2 text-xs text-gray-10">{translate("session.no_mentions_match")}</div>}
                   >
                     <For each={mentionVisible()}>
                       {(option: MentionOption) => {
@@ -1654,7 +1654,7 @@ export default function Composer(props: ComposerProps) {
                     when={slashFiltered().length}
                     fallback={
                       <div class="px-3 py-2 text-xs text-gray-10">
-                        {slashLoading() ? "Loading commands..." : "No commands found."}
+                        {slashLoading() ? translate("session.loading_commands") : translate("session.no_commands_found")}
                       </div>
                     }
                   >
@@ -1701,8 +1701,8 @@ export default function Composer(props: ComposerProps) {
                 class="w-full mb-2 flex items-center justify-between gap-3 rounded-xl border border-green-7/20 bg-green-7/10 px-3 py-2 text-left text-sm text-green-12 transition-colors hover:bg-green-7/15"
                 onClick={props.onNotionBannerClick}
               >
-                <span>Try it now: set up my CRM in Notion</span>
-                <span class="text-xs text-green-12 font-medium">Insert prompt</span>
+                <span>{translate("session.promo_try_it")}</span>
+                <span class="text-xs text-green-12 font-medium">{translate("session.insert_prompt")}</span>
               </button>
             </Show>
 
@@ -1754,7 +1754,7 @@ export default function Composer(props: ComposerProps) {
                         class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] text-gray-11 hover:bg-gray-3"
                         onClick={() => inboxFileInputRef?.click()}
                       >
-                        Upload to shared folder
+                        {translate("session.upload_shared_folder")}
                       </button>
                     </Show>
                   </div>
