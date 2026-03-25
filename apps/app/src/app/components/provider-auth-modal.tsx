@@ -6,10 +6,10 @@ import { isTauriRuntime } from "../utils";
 import { compareProviders } from "../utils/providers";
 import { t, currentLocale } from "../../i18n";
 
-const translate = (key: string) => t(key, currentLocale());
-
 import Button from "./button";
 import TextInput from "./text-input";
+
+const translate = (key: string) => t(key, currentLocale());
 
 export type ProviderAuthMethod = {
   type: "oauth" | "api";
@@ -783,13 +783,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         <div class="text-xs text-gray-10 mt-1">Paste your API key to connect.</div>
                       </div>
                       <Button variant="ghost" onClick={handleBack} disabled={actionDisabled()}>
-                        Back
+                        {translate("provider.back")}
                       </Button>
                     </div>
                     <TextInput
-                      label="API key"
+                      label={translate("provider.api_key_method")}
                       type="password"
-                      placeholder="sk-..."
+                      placeholder={translate("provider.api_key_placeholder")}
                       value={apiKeyInput()}
                       onInput={(event) => {
                         setApiKeyInput(event.currentTarget.value);
@@ -802,7 +802,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     />
                     <Show when={selectedEntry()!.env.length > 0}>
                       <div class="text-[11px] text-gray-9">
-                        Env vars: <span class="font-mono">{selectedEntry()!.env.join(", ")}</span>
+                        {translate("provider.env_vars_label")}<span class="font-mono">{selectedEntry()!.env.join(", ")}</span>
                       </div>
                     </Show>
                     <div class="flex items-center justify-between gap-3">
@@ -828,7 +828,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         <div class="text-xs text-gray-10 mt-1">Finish OAuth by pasting the authorization code.</div>
                       </div>
                       <Button variant="ghost" onClick={handleBack} disabled={actionDisabled()}>
-                        Back
+                        {translate("provider.back")}
                       </Button>
                     </div>
                     <div class="text-xs text-gray-9">
@@ -840,9 +840,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       </div>
                     </Show>
                     <TextInput
-                      label="Authorization code"
+                      label={translate("provider.confirmation_code_label")}
                       type="text"
-                      placeholder="Paste code"
+                      placeholder={translate("provider.paste_code_placeholder")}
                       value={oauthCodeInput()}
                       onInput={(event) => {
                         setOauthCodeInput(event.currentTarget.value);
@@ -885,16 +885,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     <div class="flex items-center justify-between gap-4">
                       <div>
                         <div class="text-sm font-medium text-gray-12">{selectedEntry()!.name}</div>
-                        <div class="text-xs text-gray-10 mt-1">Waiting for browser confirmation.</div>
+                        <div class="text-xs text-gray-10 mt-1">{translate("provider.waiting_browser")}</div>
                       </div>
                       <Button variant="ghost" onClick={handleBack} disabled={actionDisabled()}>
-                        Back
+                        {translate("provider.back")}
                       </Button>
                     </div>
                     <Show
                       when={isOpenAiHeadlessSession()}
                       fallback={
-                        <div class="text-xs text-gray-9">Sign in in the browser tab we just opened. We will complete the connection automatically.</div>
+                        <div class="text-xs text-gray-9">{translate("provider.browser_signin_desc")}</div>
                       }
                     >
                       <div class="space-y-2 text-xs text-gray-9">
@@ -903,13 +903,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                           The first time you do this you&apos;ll need to enable Device auth in your account settings.
                         </div>
                         <div>ChatGPT &gt; Account Settings &gt; Security &gt; Enable device code authorization</div>
-                        <div>When you&apos;re ready, copy the code below, and click &quot;Open Browser&quot;.</div>
+                        <div>{translate("provider.copy_code_desc")}</div>
                       </div>
                     </Show>
                     <Show when={oauthDisplayCode()}>
                       <div class="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-3 flex items-center gap-3">
                         <div class="flex-1 min-w-0">
-                          <div class="text-[10px] uppercase tracking-wide text-gray-8">Confirmation code</div>
+                          <div class="text-[10px] uppercase tracking-wide text-gray-8">{translate("provider.confirmation_code_label")}</div>
                           <div class="text-sm text-gray-12 font-mono break-all">{oauthDisplayCode()}</div>
                         </div>
                         <Button variant="ghost" class="text-xs shrink-0" onClick={() => void copyOauthDisplayCode()}>
@@ -919,7 +919,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </Show>
                     <div class="flex items-center gap-2 text-xs text-gray-9">
                       <Loader2 size={14} class={props.submitting || pollingBusy() || oauthAutoBusy() ? "animate-spin" : ""} />
-                      <span>Checking connection status automatically...</span>
+                      <span>{translate("provider.checking_status")}</span>
                     </div>
                     <div class="flex items-center justify-between gap-3">
                       <Button
@@ -933,10 +933,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         {isOpenAiHeadlessSession()
                           ? oauthBrowserOpened()
                             ? "Reopen Browser"
-                            : "Open Browser"
+                            : translate("provider.open_browser")
                           : "Open browser again"}
                       </Button>
-                      <div class="text-[11px] text-gray-9 text-right">This window will close once the provider is connected.</div>
+                      <div class="text-[11px] text-gray-9 text-right">{translate("provider.browser_close_hint")}</div>
                     </div>
                   </div>
                 </Show>
@@ -949,7 +949,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               <Show when={props.submitting}>{submittingLabel()}</Show>
             </div>
             <Button variant="ghost" onClick={handleClose} disabled={actionDisabled()}>
-              Close
+              {translate("provider.close")}
             </Button>
           </div>
         </div>

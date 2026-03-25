@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { t, currentLocale } from "../../i18n";
 import {
   ArrowLeft,
   Check,
@@ -28,9 +29,9 @@ const isCollaboratorField = (label: string) => /collaborator token/i.test(label)
 const isPasswordField = (label: string) => /owner token|connected token|access token|password/i.test(label);
 const isWorkerUrlField = (label: string) => /worker url/i.test(label);
 
-const displayFieldLabel = (field: ShareField) => {
-  if (isPasswordField(field.label)) return "Password";
-  if (isWorkerUrlField(field.label)) return "Worker URL";
+const displayFieldLabel = (field: ShareField, translate: (key: string) => string) => {
+  if (isPasswordField(field.label)) return translate("share.password_field");
+  if (isWorkerUrlField(field.label)) return translate("share.worker_url_field");
   return field.label;
 };
 
@@ -58,12 +59,14 @@ export default function ShareWorkspaceModal(props: {
   exportDisabledReason?: string | null;
   onOpenBots?: () => void;
 }) {
+  const translate = (key: string) => t(key, currentLocale());
+
   const [activeView, setActiveView] = createSignal<ShareView>("chooser");
   const [revealedByIndex, setRevealedByIndex] = createSignal<Record<number, boolean>>({});
   const [copiedKey, setCopiedKey] = createSignal<string | null>(null);
   const [collaboratorExpanded, setCollaboratorExpanded] = createSignal(false);
 
-  const title = createMemo(() => props.title ?? "Share workspace");
+  const title = createMemo(() => props.title ?? translate("share.title"));
   const note = createMemo(() => props.note?.trim() ?? "");
   const accessFields = createMemo(() => props.fields.filter((field) => !isInviteField(field.label)));
   const collaboratorField = createMemo(() => accessFields().find((field) => isCollaboratorField(field.label)) ?? null);
@@ -115,7 +118,7 @@ export default function ShareWorkspaceModal(props: {
     return (
       <div class="group">
         <label class="text-[11px] uppercase tracking-wider font-medium text-gray-10 mb-1.5 block">
-          {displayFieldLabel(field)}
+          {displayFieldLabel(field, translate)}
         </label>
         <div class="relative flex items-center">
           <input
