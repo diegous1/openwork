@@ -21,7 +21,7 @@ export type ConfigViewProps = {
   openworkServerUrl: string;
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
-  openworkServerWorkspaceId: string | null;
+  runtimeWorkspaceId: string | null;
 
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
@@ -112,7 +112,7 @@ export default function ConfigView(props: ConfigViewProps) {
   });
 
   const resolvedWorkspaceId = createMemo(() => {
-    const explicitId = props.openworkServerWorkspaceId?.trim() ?? "";
+    const explicitId = props.runtimeWorkspaceId?.trim() ?? "";
     if (explicitId) return explicitId;
     return parseOpenworkWorkspaceIdFromUrl(openworkUrl()) ?? "";
   });
@@ -124,9 +124,12 @@ export default function ConfigView(props: ConfigViewProps) {
   });
 
   const hostInfo = createMemo(() => props.openworkServerHostInfo);
+  const hostRemoteAccessEnabled = createMemo(
+    () => hostInfo()?.remoteAccessEnabled === true,
+  );
   const hostStatusLabel = createMemo(() => {
     if (!hostInfo()?.running) return "Offline";
-    return "Available";
+    return hostRemoteAccessEnabled() ? "Remote enabled" : "Local only";
   });
   const hostStatusStyle = createMemo(() => {
     if (!hostInfo()?.running) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
@@ -150,7 +153,7 @@ export default function ConfigView(props: ConfigViewProps) {
         developerMode: props.developerMode,
       },
       workspace: {
-        openworkServerWorkspaceId: props.openworkServerWorkspaceId ?? null,
+        runtimeWorkspaceId: props.runtimeWorkspaceId ?? null,
         clientConnected: props.clientConnected,
         anyActiveRuns: props.anyActiveRuns,
       },
@@ -164,6 +167,7 @@ export default function ConfigView(props: ConfigViewProps) {
         host: host
           ? {
               running: Boolean(host.running),
+              remoteAccessEnabled: host.remoteAccessEnabled,
               baseUrl: host.baseUrl ?? null,
               connectUrl: host.connectUrl ?? null,
               mdnsUrl: host.mdnsUrl ?? null,
@@ -218,11 +222,11 @@ export default function ConfigView(props: ConfigViewProps) {
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
         <div class="text-sm font-medium text-gray-12">Workspace config</div>
         <div class="text-xs text-gray-10">
-          These settings affect the active workspace (sharing, reload, bots). Global app behavior lives in Settings.
+          These settings affect the selected workspace. Runtime-only actions apply to whichever workspace is currently connected.
         </div>
-        <Show when={props.openworkServerWorkspaceId}>
+        <Show when={props.runtimeWorkspaceId}>
           <div class="text-[11px] text-gray-7 font-mono truncate">
-            Workspace: {props.openworkServerWorkspaceId}
+            Workspace: {props.runtimeWorkspaceId}
           </div>
         </Show>
       </div>
@@ -342,7 +346,9 @@ export default function ConfigView(props: ConfigViewProps) {
                 <div class="text-xs text-gray-7 font-mono truncate">{hostConnectUrl() || "Starting server…"}</div>
                 <Show when={hostConnectUrl()}>
                   <div class="text-[11px] text-gray-8 mt-1">
-                    {hostConnectUrlUsesMdns()
+                    {!hostRemoteAccessEnabled()
+                      ? "Remote access is off. Use Share workspace to enable it before connecting from another machine."
+                      : hostConnectUrlUsesMdns()
                       ? ".local names are easier to remember but may not resolve on all networks."
                       : "Use your local IP on the same Wi-Fi for the fastest connection."}
                   </div>
@@ -368,7 +374,11 @@ export default function ConfigView(props: ConfigViewProps) {
                       ? "••••••••••••"
                       : "—"}
                 </div>
-                <div class="text-[11px] text-gray-8 mt-1">Routine remote access for phones or laptops connecting to this server.</div>
+                <div class="text-[11px] text-gray-8 mt-1">
+                  {hostRemoteAccessEnabled()
+                    ? "Routine remote access for phones or laptops connecting to this server."
+                    : "Stored in advance for remote sharing, but remote access is currently disabled."}
+                </div>
               </div>
               <div class="flex items-center gap-2 shrink-0">
                 <Button
@@ -400,7 +410,11 @@ export default function ConfigView(props: ConfigViewProps) {
                       ? "••••••••••••"
                       : "—"}
                 </div>
-                <div class="text-[11px] text-gray-8 mt-1">Use this when a remote client needs to answer permission prompts or take owner-only actions.</div>
+                <div class="text-[11px] text-gray-8 mt-1">
+                  {hostRemoteAccessEnabled()
+                    ? "Use this when a remote client needs to answer permission prompts or take owner-only actions."
+                    : "Only relevant after you enable remote access for this worker."}
+                </div>
               </div>
               <div class="flex items-center gap-2 shrink-0">
                 <Button
@@ -477,8 +491,8 @@ export default function ConfigView(props: ConfigViewProps) {
             label="OpenWork server URL"
             value={openworkUrl()}
             onInput={(event) => setOpenworkUrl(event.currentTarget.value)}
-            placeholder="http://127.0.0.1:8787"
-            hint="Use the URL shared by your OpenWork server."
+            placeholder="http://127.0.0.1:<port>"
+            hint="Use the URL shared by your OpenWork server. Local desktop workers reuse a persistent high port in the 48000-51000 range."
             disabled={props.busy}
           />
 

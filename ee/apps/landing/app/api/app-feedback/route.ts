@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { buildResponseHeaders, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
 
 type FeedbackContext = {
   source?: string;
@@ -18,6 +18,8 @@ type FeedbackPayload = {
   name?: string;
   email?: string;
   message?: string;
+  website?: string;
+  startedAt?: number | string;
   context?: FeedbackContext;
 };
 
@@ -63,6 +65,27 @@ function formatDiagnosticsSummary(context: ReturnType<typeof sanitizeContext>) {
 }
 
 export async function POST(request: Request) {
+  const originCheck = validateTrustedOrigin(request);
+  if (!originCheck.ok) {
+    return jsonResponse(request, { error: originCheck.error }, originCheck.status);
+  }
+
+  const rateLimit = rateLimitFormRequest(request, "app-feedback");
+  if (!rateLimit.ok) {
+    return new Response(JSON.stringify({ error: "Feedback form is temporarily rate limited." }), {
+      status: 429,
+      headers: {
+        ...buildResponseHeaders(request),
+        "X-Retry-After": String(rateLimit.retryAfterSeconds),
+      },
+    });
+  }
+
+  const botProtection = await verifyFormBotProtection();
+  if (!botProtection.ok) {
+    return jsonResponse(request, { error: botProtection.error }, botProtection.status);
+  }
+
   const apiKey = process.env.LOOPS_API_KEY?.trim();
   const transactionalId =
     process.env.LOOPS_TRANSACTIONAL_ID_APP_FEEDBACK?.trim();
@@ -71,20 +94,30 @@ export async function POST(request: Request) {
     DEFAULT_INTERNAL_FEEDBACK_EMAIL;
 
   if (!apiKey || !transactionalId) {
-    return NextResponse.json(
+    return jsonResponse(
+      request,
       { error: "App feedback is not configured on this deployment." },
-      { status: 500 },
+      500,
     );
   }
 
   let payload: FeedbackPayload;
   try {
-    payload = (await request.json()) as FeedbackPayload;
+    const raw = await request.text();
+    if (raw.length > 8000) {
+      return jsonResponse(request, { error: "Request payload is too large." }, 413);
+    }
+    payload = JSON.parse(raw) as FeedbackPayload;
   } catch {
-    return NextResponse.json(
+    return jsonResponse(request,
       { error: "Invalid request payload." },
-      { status: 400 },
+      400,
     );
+  }
+
+  const antiSpam = validateAntiSpamFields(payload);
+  if (!antiSpam.ok) {
+    return jsonResponse(request, { error: antiSpam.error }, antiSpam.status);
   }
 
   const message = sanitizeValue(payload.message, 5000);
@@ -92,23 +125,23 @@ export async function POST(request: Request) {
   const email = sanitizeValue(payload.email, 240);
 
   if (!name) {
-    return NextResponse.json(
+    return jsonResponse(request,
       { error: "Please include your name so we know who sent this." },
-      { status: 400 },
+      400,
     );
   }
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return NextResponse.json(
+    return jsonResponse(request,
       { error: "Please include a valid email so we can follow up." },
-      { status: 400 },
+      400,
     );
   }
 
   if (!message) {
-    return NextResponse.json(
+    return jsonResponse(request,
       { error: "Please include a short message before sending feedback." },
-      { status: 400 },
+      400,
     );
   }
 
@@ -125,7 +158,7 @@ export async function POST(request: Request) {
       email,
       context,
     });
-    return NextResponse.json({ ok: true });
+    return jsonResponse(request, { ok: true });
   }
 
   const response = await fetch(LOOPS_TRANSACTIONAL_API_URL, {
@@ -171,8 +204,8 @@ export async function POST(request: Request) {
       // Ignore invalid upstream error bodies.
     }
 
-    return NextResponse.json({ error: detail }, { status: 502 });
+    return jsonResponse(request, { error: detail }, 502);
   }
 
-  return NextResponse.json({ ok: true });
+  return jsonResponse(request, { ok: true });
 }

@@ -41,6 +41,7 @@ test("buildBundlePreviewSelections exposes workspace configs alongside skills", 
       config: {
         "team-rules.json": { strict: true },
       },
+      files: [{ path: ".opencode/agents/openwork.md", content: "# OpenWork\n" }],
     },
     skills: [],
     commands: [],
@@ -50,17 +51,27 @@ test("buildBundlePreviewSelections exposes workspace configs alongside skills", 
 
   assert.deepEqual(
     selections.map((selection) => selection.filename),
-    ["workspace-guide.md", "daily-sync.md", "concierge.json", "github.json", "opencode.json", "openwork.json", "team-rules.json"],
+    [
+      "workspace-guide.md",
+      "daily-sync.md",
+      "concierge.json",
+      "github.json",
+      "opencode.json",
+      "openwork.json",
+      "team-rules.json",
+      "openwork.md",
+    ],
   );
   assert.equal(selections[4]?.label, "OpenCode settings");
   assert.equal(selections[5]?.label, "Workspace settings");
+  assert.match(selections[7]?.label ?? "", /Agent file/);
 });
 
 test("buildOgImageUrls returns typed platform variants", () => {
   const urls = buildOgImageUrls(
     {
       headers: {
-        host: "share.openwork.software",
+        host: "share.openworklabs.com",
         "x-forwarded-proto": "https",
       },
       query: {},
@@ -68,10 +79,10 @@ test("buildOgImageUrls returns typed platform variants", () => {
     "01TESTPREVIEW",
   );
 
-  assert.equal(urls.default, "https://share.openwork.software/og/01TESTPREVIEW");
-  assert.equal(urls.twitter, "https://share.openwork.software/og/01TESTPREVIEW?variant=twitter");
-  assert.equal(urls.byVariant.facebook, "https://share.openwork.software/og/01TESTPREVIEW");
-  assert.equal(urls.byVariant.linkedin, "https://share.openwork.software/og/01TESTPREVIEW?variant=linkedin");
-  assert.equal(urls.byVariant.slack, "https://share.openwork.software/og/01TESTPREVIEW?variant=slack");
-  assert.equal(urls.byVariant.whatsapp, "https://share.openwork.software/og/01TESTPREVIEW?variant=whatsapp");
+  assert.equal(urls.default, "https://share.openworklabs.com/og/01TESTPREVIEW");
+  assert.equal(urls.twitter, "https://share.openworklabs.com/og/01TESTPREVIEW?variant=twitter");
+  assert.equal(urls.byVariant.facebook, "https://share.openworklabs.com/og/01TESTPREVIEW");
+  assert.equal(urls.byVariant.linkedin, "https://share.openworklabs.com/og/01TESTPREVIEW?variant=linkedin");
+  assert.equal(urls.byVariant.slack, "https://share.openworklabs.com/og/01TESTPREVIEW?variant=slack");
+  assert.equal(urls.byVariant.whatsapp, "https://share.openworklabs.com/og/01TESTPREVIEW?variant=whatsapp");
 });
