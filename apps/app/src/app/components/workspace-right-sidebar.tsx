@@ -1,4 +1,5 @@
 import { Show, type JSX } from "solid-js";
+import { t, currentLocale } from "../../i18n";
 import {
   Box,
   ChevronLeft,
@@ -38,6 +39,7 @@ type Props = {
 };
 
 export default function WorkspaceRightSidebar(props: Props) {
+  const translate = (key: string) => t(key, currentLocale());
   const mobile = () => props.mobile ?? false;
   const showSelection = () => props.showSelection ?? true;
   const closeMobile = () => props.onCloseMobile?.();
@@ -88,8 +90,8 @@ export default function WorkspaceRightSidebar(props: Props) {
           type="button"
           class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
           onClick={mobile() ? closeMobile : props.onToggleExpanded}
-          title={mobile() ? "Close sidebar" : props.expanded ? "Collapse sidebar" : "Expand sidebar"}
-          aria-label={mobile() ? "Close sidebar" : props.expanded ? "Collapse sidebar" : "Expand sidebar"}
+          title={mobile() ? translate("session.close_sidebar") : props.expanded ? translate("session.collapse_sidebar") : translate("session.expand_sidebar")}
+          aria-label={mobile() ? translate("session.close_sidebar") : props.expanded ? translate("session.collapse_sidebar") : translate("session.expand_sidebar")}
         >
           <Show
             when={mobile()}
@@ -102,7 +104,7 @@ export default function WorkspaceRightSidebar(props: Props) {
       <div class={`flex-1 overflow-y-auto ${props.expanded ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}>
         <div class="mb-2 space-y-1">
           {sidebarButton(
-            "Automations",
+            translate("session.sidebar_automations"),
             <History size={18} />,
             showSelection() && props.tab === "scheduled",
             props.onOpenAutomations,
@@ -114,7 +116,7 @@ export default function WorkspaceRightSidebar(props: Props) {
             props.onOpenSkills,
           )}
           {sidebarButton(
-            "Extensions",
+            translate("session.sidebar_extensions"),
             <Box size={18} />,
             showSelection() && (props.tab === "mcp" || props.tab === "plugins"),
             props.onOpenExtensions,

@@ -15,6 +15,7 @@ import {
 } from "../lib/den";
 import { isDesktopDeployment } from "../lib/openwork-deployment";
 import { usePlatform } from "../context/platform";
+import { t } from "../../i18n";
 
 type DenSettingsPanelProps = {
   developerMode: boolean;
@@ -43,18 +44,18 @@ function workerStatusMeta(status: string) {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "healthy":
-      return { label: "Ready", tone: "ready" as const, canOpen: true };
+      return { label: t("den.status_ready"), tone: "ready" as const, canOpen: true };
     case "provisioning":
-      return { label: "Provisioning", tone: "warning" as const, canOpen: false };
+      return { label: t("den.status_provisioning"), tone: "warning" as const, canOpen: false };
     case "failed":
-      return { label: "Failed", tone: "error" as const, canOpen: false };
+      return { label: t("den.status_failed"), tone: "error" as const, canOpen: false };
     case "stopped":
-      return { label: "Stopped", tone: "neutral" as const, canOpen: false };
+      return { label: t("den.status_stopped"), tone: "neutral" as const, canOpen: false };
     default:
       return {
         label: normalized
           ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : "Unknown",
+          : t("den.status_unknown"),
         tone: "neutral" as const,
         canOpen: normalized === "ready",
       };
@@ -116,10 +117,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   });
 
   const summaryLabel = createMemo(() => {
-    if (authError()) return "Needs attention";
-    if (sessionBusy()) return "Checking session";
-    if (isSignedIn()) return "Connected";
-    return "Signed out";
+    if (authError()) return t("den.summary_needs_attention");
+    if (sessionBusy()) return t("den.summary_checking");
+    if (isSignedIn()) return t("den.summary_connected");
+    return t("den.summary_signed_out");
   });
 
   createEffect(() => {
@@ -152,8 +153,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     platform.openLink(target.toString());
     setStatusMessage(
       mode === "sign-up"
-        ? "Finish account creation in your browser to connect OpenWork."
-        : "Finish signing in in your browser to connect OpenWork.",
+        ? t("den.finish_creation")
+        : t("den.finish_sign_in"),
     );
     setAuthError(null);
   };
@@ -184,7 +185,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const applyBaseUrl = () => {
     const normalized = normalizeDenBaseUrl(baseUrlDraft());
     if (!normalized) {
-      setBaseUrlError("Enter a valid http:// or https:// Den control plane URL.");
+      setBaseUrlError(t("den.invalid_url"));
       return;
     }
 
@@ -197,7 +198,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     setBaseUrl(resolved.baseUrl);
     setBaseUrlDraft(resolved.baseUrl);
-    clearSignedInState("Updated the Den control plane URL. Sign in again to continue.");
+    clearSignedInState(t("den.url_updated"));
   };
 
   const refreshOrgs = async (quiet = false) => {
@@ -219,11 +220,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       setActiveOrgId(next);
       if (!quiet && response.orgs.length > 0) {
         setStatusMessage(
-          `Loaded ${response.orgs.length} org${response.orgs.length === 1 ? "" : "s"}.`,
+          t("den.loaded_orgs").replace("{count}", String(response.orgs.length)),
         );
       }
     } catch (error) {
-      setOrgsError(error instanceof Error ? error.message : "Failed to load orgs.");
+      setOrgsError(error instanceof Error ? error.message : t("den.failed_load_orgs"));
     } finally {
       setOrgsBusy(false);
     }
@@ -243,14 +244,15 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       const nextWorkers = await client().listWorkers(orgId, 20);
       setWorkers(nextWorkers);
       if (!quiet) {
+        const orgName = activeOrg()?.name ?? "this org";
         setStatusMessage(
           nextWorkers.length > 0
-            ? `Loaded ${nextWorkers.length} worker${nextWorkers.length === 1 ? "" : "s"} for ${activeOrg()?.name ?? "this org"}.`
-            : `No workers found for ${activeOrg()?.name ?? "this org"}.`,
+            ? t("den.loaded_workers").replace("{count}", String(nextWorkers.length)).replace("{org}", orgName)
+            : t("den.no_workers_found").replace("{org}", orgName),
         );
       }
     } catch (error) {
-      setWorkersError(error instanceof Error ? error.message : "Failed to load workers.");
+      setWorkersError(error instanceof Error ? error.message : t("den.failed_load_workers"));
     } finally {
       setWorkersBusy(false);
     }
@@ -276,7 +278,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       .then((nextUser) => {
         if (cancelled) return;
         setUser(nextUser);
-        setStatusMessage(`Signed in as ${nextUser.email}.`);
+        setStatusMessage(t("den.signed_in_as").replace("{email}", nextUser.email));
       })
       .catch((error) => {
         if (cancelled) return;
@@ -286,7 +288,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           clearSessionState();
         }
         setAuthError(
-          error instanceof Error ? error.message : "No active Den session found.",
+          error instanceof Error ? error.message : t("den.no_session"),
         );
       })
       .finally(() => {
@@ -324,13 +326,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         setAuthError(null);
         setStatusMessage(
           customEvent.detail.email?.trim()
-            ? `Connected OpenWork Den as ${customEvent.detail.email.trim()}.`
-            : "Connected OpenWork Den.",
+            ? t("den.connected_as").replace("{email}", customEvent.detail.email.trim())
+            : t("den.connected"),
         );
       } else if (customEvent.detail?.status === "error") {
         setAuthError(
           customEvent.detail.message?.trim() ||
-            "Failed to finish OpenWork Den sign-in.",
+            t("den.sign_in_failed"),
         );
       }
     };
@@ -360,15 +362,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       setAuthBusy(false);
     }
 
-    clearSignedInState(
-      "Signed out and cleared your OpenWork Den session on this device.",
-    );
+    clearSignedInState(t("den.signed_out_msg"));
   };
 
   const handleOpenWorker = async (workerId: string, workerName: string) => {
     const orgId = activeOrgId().trim();
     if (!orgId) {
-      setWorkersError("Choose an org before opening a worker.");
+      setWorkersError(t("den.choose_org"));
       return;
     }
 
@@ -381,9 +381,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       const accessToken =
         tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
       if (!openworkUrl || !accessToken) {
-        throw new Error(
-          "Worker is not ready to open yet. Try again after provisioning finishes.",
-        );
+        throw new Error(t("den.worker_not_ready"));
       }
 
       const ok = await props.connectRemoteWorkspace({
@@ -393,13 +391,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         displayName: workerName,
       });
       if (!ok) {
-        throw new Error(`Failed to open ${workerName} in OpenWork.`);
+        throw new Error(t("den.failed_open_worker").replace("{name}", workerName));
       }
 
-      setStatusMessage(`Opened ${workerName} in OpenWork.`);
+      setStatusMessage(t("den.opened_worker").replace("{name}", workerName));
     } catch (error) {
       setWorkersError(
-        error instanceof Error ? error.message : `Failed to open ${workerName}.`,
+        error instanceof Error ? error.message : t("den.failed_open").replace("{name}", workerName),
       );
     } finally {
       setOpeningWorkerId(null);
@@ -422,15 +420,14 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           <div class="space-y-2">
             <div class={headerBadgeClass}>
               <Cloud size={13} class="text-dls-secondary" />
-              OpenWork Den
+              {t("den.title")}
             </div>
             <div>
               <div class="text-sm font-medium text-dls-text">
-                Sign in, pick an org, and open Den workers from Settings.
+                {t("den.description")}
               </div>
               <div class="mt-1 max-w-[60ch] text-xs text-dls-secondary">
-                Sign in to OpenWork Den to keep your tasks alive even when your
-                computer sleeps.
+                {t("den.tagline")}
               </div>
             </div>
           </div>
@@ -445,11 +442,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         <Show when={props.developerMode}>
           <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <TextInput
-              label="Den control plane URL"
+              label={t("den.control_plane_url_label")}
               value={baseUrlDraft()}
               onInput={(event) => setBaseUrlDraft(event.currentTarget.value)}
               placeholder={DEFAULT_DEN_BASE_URL}
-              hint="Developer mode only. Use this to target a local or self-hosted Den control plane. Changing it signs you out so the app can re-hydrate against the new control plane."
+              hint={t("den.control_plane_url_hint")}
               disabled={authBusy() || sessionBusy()}
             />
             <div class="flex flex-wrap items-center gap-2">
@@ -459,7 +456,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                 onClick={() => setBaseUrlDraft(baseUrl())}
                 disabled={authBusy() || sessionBusy()}
               >
-                Reset
+                {t("den.reset")}
               </Button>
               <Button
                 variant="secondary"
@@ -467,14 +464,14 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                 onClick={applyBaseUrl}
                 disabled={authBusy() || sessionBusy()}
               >
-                Save URL
+                {t("den.save_url")}
               </Button>
               <Button
                 variant="outline"
                 class="h-9 px-3 text-xs"
                 onClick={openControlPlane}
               >
-                Open in browser
+                {t("den.open_in_browser")}
                 <ArrowUpRight size={13} />
               </Button>
             </div>
@@ -502,17 +499,16 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         <div class={`${settingsPanelClass} space-y-4`}>
           <div class="space-y-2">
             <div class="text-sm font-medium text-dls-text">
-              Sign in to OpenWork Den
+              {t("den.sign_in_title")}
             </div>
             <div class="max-w-[54ch] text-sm text-dls-secondary">
-              Sign in to OpenWork Den to keep your tasks alive even when your
-              computer sleeps.
+              {t("den.tagline")}
             </div>
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
             <Button variant="secondary" onClick={() => openBrowserAuth("sign-in")}>
-              Sign in
+              {t("den.sign_in")}
               <ArrowUpRight size={13} />
             </Button>
             <Button
@@ -520,7 +516,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               class="text-xs h-9 px-3"
               onClick={() => openBrowserAuth("sign-up")}
             >
-              Create account
+              {t("den.create_account")}
               <ArrowUpRight size={13} />
             </Button>
           </div>
@@ -534,8 +530,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           </Show>
 
           <div class={`${settingsPanelSoftClass} text-sm text-gray-10`}>
-            Finish auth in your browser and OpenWork will reconnect here
-            automatically.
+            {t("den.finish_auth")}
           </div>
         </div>
       </Show>
@@ -544,9 +539,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         <div class="space-y-6">
           <div class={`${settingsPanelClass} space-y-4`}>
             <div>
-              <div class="text-sm font-medium text-dls-text">Den Account</div>
+              <div class="text-sm font-medium text-dls-text">{t("den.account_title")}</div>
               <div class="mt-1 text-xs text-dls-secondary">
-                Manage your connected account and organization.
+                {t("den.account_description")}
               </div>
             </div>
 
@@ -567,15 +562,15 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={authBusy() || sessionBusy()}
                 >
                   <LogOut size={13} class="mr-1.5" />
-                  {authBusy() ? "Signing out..." : "Sign out"}
+                  {authBusy() ? t("den.signing_out") : t("den.sign_out")}
                 </Button>
               </div>
 
               <div class="flex flex-col gap-3 rounded-xl border border-gray-6/60 bg-gray-1/40 p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div class="min-w-0">
-                  <div class="text-sm font-medium text-dls-text">Active org</div>
+                  <div class="text-sm font-medium text-dls-text">{t("den.active_org")}</div>
                   <div class="truncate text-xs text-dls-secondary">
-                    Workers are scoped to the selected org.
+                    {t("den.workers_scoped")}
                   </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
@@ -585,7 +580,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                     onChange={(event) => {
                       setActiveOrgId(event.currentTarget.value);
                       setStatusMessage(
-                        `Switched to ${activeOrg()?.name ?? "the selected org"}.`,
+                        t("den.switched_org").replace("{org}", activeOrg()?.name ?? "the selected org"),
                       );
                     }}
                     disabled={orgsBusy() || orgs().length === 0}
@@ -593,7 +588,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                     <For each={orgs()}>
                       {(org) => (
                         <option value={org.id}>
-                          {org.name} {org.role === "owner" ? "(Owner)" : "(Member)"}
+                          {org.name} {org.role === "owner" ? t("den.owner_suffix") : t("den.member_suffix")}
                         </option>
                       )}
                     </For>
@@ -624,17 +619,16 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Server size={15} class="text-dls-secondary" />
-                  Den workers
+                  {t("den.workers_title")}
                 </div>
                 <div class="mt-1 text-xs text-dls-secondary">
-                  Open workers directly into OpenWork using the same
-                  remote-connect flow the app already uses elsewhere.
+                  {t("den.workers_description")}
                 </div>
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <div class="inline-flex items-center gap-1.5 rounded-full border border-gray-6/60 bg-gray-1/40 px-2.5 py-1 text-[11px] font-medium text-gray-11">
                   <Users size={12} />
-                  {activeOrg()?.name || "No org selected"}
+                  {activeOrg()?.name || t("den.no_org_selected")}
                 </div>
                 <Button
                   variant="outline"
@@ -643,7 +637,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={workersBusy() || !activeOrgId().trim()}
                 >
                   <RefreshCcw size={13} class={workersBusy() ? "animate-spin" : ""} />
-                  Refresh
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -658,8 +652,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
             <Show when={!workersBusy() && workers().length === 0}>
               <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                No cloud workers are visible for this org yet. Create one in
-                Den, then refresh this tab.
+                {t("den.no_workers_visible")}
               </div>
             </Show>
 
@@ -681,12 +674,12 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                           </span>
                           <Show when={worker.isMine}>
                             <span class="inline-flex items-center rounded-full border border-gray-6/60 bg-gray-1/40 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                              Mine
+                              {t("den.mine_badge")}
                             </span>
                           </Show>
                         </div>
                         <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
-                          {worker.provider ? `${worker.provider} worker` : "Cloud worker"}
+                          {worker.provider ? t("den.worker_type").replace("{provider}", worker.provider) : t("den.cloud_worker")}
                           <Show when={worker.instanceUrl}>
                             {(value) => <span> · {value()}</span>}
                           </Show>
@@ -699,9 +692,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                           void handleOpenWorker(worker.workerId, worker.workerName)
                         }
                         disabled={openingWorkerId() !== null || !status().canOpen}
-                        title={!status().canOpen ? "This worker is not ready to open yet." : undefined}
+                        title={!status().canOpen ? t("den.worker_not_ready_tooltip") : undefined}
                       >
-                        {openingWorkerId() === worker.workerId ? "Opening..." : "Open"}
+                        {openingWorkerId() === worker.workerId ? t("den.opening") : t("den.open")}
                       </Button>
                     </div>
                   );

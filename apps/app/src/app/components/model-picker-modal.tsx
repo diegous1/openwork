@@ -306,9 +306,9 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             <span class="truncate">{provider.title}</span>
           </div>
           <div class={`mt-0.5 flex items-center gap-3 text-[11px] ${index === activeIndex() ? 'text-gray-10' : 'text-gray-9 group-hover:text-gray-10'}`}>
-            <span class="truncate">Connect this provider to browse and save models</span>
+            <span class="truncate">{translate("model_picker.connect_provider")}</span>
             <span class="ml-auto opacity-70">
-              {provider.matchCount} {provider.matchCount === 1 ? "model" : "models"}
+              {provider.matchCount} {provider.matchCount === 1 ? translate("model_picker.model_singular") : translate("model_picker.model_plural")}
             </span>
           </div>
         </div>
@@ -324,12 +324,12 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             <div class="flex items-start justify-between gap-4">
               <div>
                 <h3 class="text-lg font-semibold text-gray-12">
-                  {props.target === "default" ? "Default model" : "Chat model"}
+                  {props.target === "default" ? translate("model_picker.default_label") : translate("model_picker.chat_label")}
                 </h3>
                 <p class="text-sm text-gray-11 mt-1">
                   {props.target === "default"
-                    ? "Choose the default model for new chats. If a model supports reasoning profiles, configure them on its card."
-                    : "Choose the model for this chat. If a model supports reasoning profiles, configure them on its card."}
+                    ? translate("model_picker.default_desc")
+                    : translate("model_picker.chat_desc")}
                 </p>
               </div>
               <Button
@@ -364,7 +364,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               <Show when={recommendedOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    Recommended
+                    {translate("model_picker.recommended")}
                   </div>
                   <For each={recommendedOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
                 </section>
@@ -373,7 +373,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               <Show when={otherEnabledOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    Other connected models
+                    {translate("model_picker.other_connected")}
                   </div>
                   <For each={otherEnabledOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
                 </section>
@@ -382,7 +382,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               <Show when={otherOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    More providers
+                    {translate("model_picker.more_providers")}
                   </div>
                   <For each={otherOptions()}>
                     {(provider) => renderProviderLink(provider, provider.index)}
@@ -392,7 +392,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
 
               <Show when={renderedItems().length === 0}>
                 <div class="rounded-2xl border border-gray-6/70 bg-gray-1/40 px-4 py-6 text-sm text-gray-10">
-                  No models match your search.
+                  {translate("model_picker.no_match")}
                 </div>
               </Show>
             </div>

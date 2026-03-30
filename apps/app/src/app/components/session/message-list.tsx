@@ -31,6 +31,7 @@ import {
 } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { t } from "../../../i18n";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -228,57 +229,57 @@ function toolHeadline(part: Part) {
     const description = pick("description");
     if (description) return compactText(description);
     const command = pick("command", "cmd");
-    return command ? compactText(`Run ${command}`, 48) : "Run command";
+    return command ? compactText(t("session.tool_run_command").replace("{cmd}", command), 48) : t("session.tool_run_command_fallback");
   }
 
   if (tool === "read") {
     const file = target("filePath", "path", "file");
-    return file ? `Reviewed ${file}` : "Reviewed file";
+    return file ? t("session.tool_reviewed_file").replace("{file}", file) : t("session.tool_reviewed_file_fallback");
   }
 
   if (tool === "edit") {
     const file = target("filePath", "path", "file");
-    return file ? `Updated ${file}` : "Updated file";
+    return file ? t("session.tool_updated_file").replace("{file}", file) : t("session.tool_updated_file_fallback");
   }
 
   if (tool === "write" || tool === "apply_patch") {
     const file = target("filePath", "path", "file");
-    return file ? `Update ${file}` : "Update file";
+    return file ? t("session.tool_update_file").replace("{file}", file) : t("session.tool_update_file_fallback");
   }
 
   if (tool === "grep" || tool === "glob" || tool === "search") {
     const pattern = pick("pattern", "query");
-    return pattern ? `Searched ${compactText(pattern, 36)}` : "Searched code";
+    return pattern ? t("session.tool_searched").replace("{pattern}", compactText(pattern, 36)) : t("session.tool_searched_fallback");
   }
 
   if (tool === "list" || tool === "list_files") {
     const path = target("path");
-    return path ? `Reviewed ${path}` : "Reviewed files";
+    return path ? t("session.tool_reviewed_files").replace("{path}", path) : t("session.tool_reviewed_files_fallback");
   }
 
   if (tool === "task") {
     const description = pick("description");
     if (description) return compactText(description);
     const agent = pick("subagent_type");
-    return agent ? `Delegate ${agent}` : "Delegate task";
+    return agent ? t("session.tool_delegate").replace("{agent}", agent) : t("session.tool_delegate_fallback");
   }
 
   if (tool === "todowrite") {
-    return "Update todo list";
+    return t("session.tool_update_todo");
   }
 
   if (tool === "todoread") {
-    return "Read todo list";
+    return t("session.tool_read_todo");
   }
 
   if (tool === "webfetch") {
     const url = pick("url");
-    return url ? `Checked ${compactText(url, 36)}` : "Checked web page";
+    return url ? t("session.tool_checked_url").replace("{url}", compactText(url, 36)) : t("session.tool_checked_url_fallback");
   }
 
   if (tool === "skill") {
     const name = pick("name");
-    return name ? `Load skill ${name}` : "Load skill";
+    return name ? t("session.tool_load_skill").replace("{name}", name) : t("session.tool_load_skill_fallback");
   }
 
   const fallback = tool
@@ -697,16 +698,16 @@ export default function MessageList(props: MessageListProps) {
       if (title) return title;
       if (task().description) return task().description!;
       if (task().agentType) return `${task().agentType} task`;
-      return "Subagent session";
+      return t("session.subagent_session");
     });
     const statusLabel = createMemo(() => {
-      if (loading()) return "Loading transcript";
-      if (streaming()) return "Running";
+      if (loading()) return t("session.loading_transcript");
+      if (streaming()) return t("session.subagent_running");
       if (childMessages().length > 0) {
         const count = childMessages().length;
         return `${count} message${count === 1 ? "" : "s"}`;
       }
-      return "Waiting for transcript";
+      return t("session.waiting_transcript");
     });
 
     createEffect(() => {
@@ -754,7 +755,7 @@ export default function MessageList(props: MessageListProps) {
             <div class="mt-3 rounded-[18px] border border-dls-border/70 bg-dls-surface px-3 py-3">
               <Show
                 when={childMessages().length > 0}
-                fallback={<div class="text-[12px] leading-5 text-gray-9">Waiting for the subagent transcript to arrive.</div>}
+                fallback={<div class="text-[12px] leading-5 text-gray-9">{t("session.waiting_subagent")}</div>}
               >
                 <MessageList
                   messages={childMessages()}
@@ -855,13 +856,13 @@ export default function MessageList(props: MessageListProps) {
           <div class="mt-3 ml-[22px] space-y-3">
             <Show when={hasStructuredValue(toolInput())}>
               <div>
-                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Request</div>
+                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">{t("session.request_label")}</div>
                 <pre class="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">{formatStructuredValue(toolInput())}</pre>
               </div>
             </Show>
             <Show when={hasStructuredValue(toolOutput())}>
               <div>
-                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Result</div>
+                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">{t("session.result_label")}</div>
                 <pre class="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">{formatStructuredValue(toolOutput())}</pre>
               </div>
             </Show>

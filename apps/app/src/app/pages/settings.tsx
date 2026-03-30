@@ -229,11 +229,10 @@ export function OpenCodeRouterSettings(_props: {
     <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
       <div class="flex items-center gap-2">
         <MessageCircle size={16} class="text-gray-11" />
-        <div class="text-sm font-medium text-gray-12">Messaging</div>
+        <div class="text-sm font-medium text-gray-12">{t("settings.messaging")}</div>
       </div>
       <div class="text-xs text-gray-10">
-        Manage Telegram/Slack identities and bindings in the{" "}
-        <span class="font-medium text-gray-12">Identities</span> tab.
+        {t("settings.identities_tab_hint")}
       </div>
     </div>
   );
@@ -1537,7 +1536,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           <div class="flex h-10 w-10 items-center justify-center rounded-full bg-blue-3/30 text-blue-11 mb-3">
                             <Folder size={20} />
                           </div>
-                          <div class="text-sm font-medium text-gray-11">No external folders authorized</div>
+                          <div class="text-sm font-medium text-gray-11">{t("settings.no_authorized_folders")}</div>
                           <div class="text-[11px] text-gray-9 mt-1 max-w-[40ch]">
                             Add a folder to let this workspace read and edit files outside its root directory.
                           </div>
@@ -1611,7 +1610,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           onPaste={(event) => {
                             event.preventDefault();
                           }}
-                          placeholder="Type a folder path to authorize..."
+                          placeholder={t("settings.folder_path_placeholder")}
                           disabled={
                             props.authorizedFoldersLoading ||
                             props.authorizedFoldersSaving ||
@@ -1808,7 +1807,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
                 <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                   <div class="min-w-0">
-                    <div class="text-sm text-gray-12">Hide titlebar</div>
+                    <div class="text-sm text-gray-12">{t("settings.hide_titlebar")}</div>
                     <div class="text-xs text-gray-7">
                       Hide the window titlebar. Useful for tiling window
                       managers on Linux (Hyprland, i3, sway).
@@ -1866,7 +1865,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Show model reasoning</div>
+                  <div class="text-sm text-gray-12">{t("settings.show_model_reasoning")}</div>
                   <div class="text-xs text-gray-7">
                     Expand reasoning traces in the UI when a model exposes them.
                   </div>
@@ -1902,7 +1901,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Model behavior</div>
+                  <div class="text-sm text-gray-12">{t("settings.model_behavior")}</div>
                   <div class="text-xs text-gray-7 truncate">
                     Open the default model picker to choose reasoning profiles when they are available.
                   </div>
@@ -1927,7 +1926,7 @@ export default function SettingsView(props: SettingsViewProps) {
           <div class="space-y-6">
             <div class={`${settingsPanelClass} space-y-4`}>
               <div>
-                <div class="text-sm font-medium text-gray-12">Runtime</div>
+                <div class="text-sm font-medium text-gray-12">{t("settings.runtime")}</div>
                 <div class="text-xs text-gray-9">
                   Status for your local engine and OpenWork server.
                 </div>
@@ -1993,7 +1992,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Enable Exa web search</div>
+                  <div class="text-sm text-gray-12">{t("settings.enable_exa_search")}</div>
                   <div class="text-xs text-gray-7">
                     Applies when OpenWork Orchestrator launches OpenCode. Off by
                     default until the integration is fully rolled out.
@@ -2015,7 +2014,7 @@ export default function SettingsView(props: SettingsViewProps) {
             </div>
 
             <div class={`${settingsPanelClass} space-y-3`}>
-              <div class="text-sm font-medium text-gray-12">Developer mode</div>
+              <div class="text-sm font-medium text-gray-12">{t("settings.developer_mode")}</div>
               <div class="text-xs text-gray-9">
                 Enables debug tools, diagnostics, and the Developer tab.
               </div>
@@ -2100,7 +2099,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             setDebugDeepLinkInput(event.currentTarget.value)
                           }
                           rows={3}
-                          placeholder="openwork://..."
+                          placeholder={t("settings.scheme_placeholder")}
                           class="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"
                         />
                         <div class="flex flex-wrap items-center gap-2">

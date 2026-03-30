@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { t, currentLocale } from "../../i18n";
 import {
   ArrowLeft,
   Check,
@@ -28,9 +29,9 @@ const isCollaboratorField = (label: string) => /collaborator token/i.test(label)
 const isPasswordField = (label: string) => /owner token|connected token|access token|password/i.test(label);
 const isWorkerUrlField = (label: string) => /worker url/i.test(label);
 
-const displayFieldLabel = (field: ShareField) => {
-  if (isPasswordField(field.label)) return "Password";
-  if (isWorkerUrlField(field.label)) return "Worker URL";
+const displayFieldLabel = (field: ShareField, translate: (key: string) => string) => {
+  if (isPasswordField(field.label)) return translate("share.password_field");
+  if (isWorkerUrlField(field.label)) return translate("share.worker_url_field");
   return field.label;
 };
 
@@ -58,12 +59,14 @@ export default function ShareWorkspaceModal(props: {
   exportDisabledReason?: string | null;
   onOpenBots?: () => void;
 }) {
+  const translate = (key: string) => t(key, currentLocale());
+
   const [activeView, setActiveView] = createSignal<ShareView>("chooser");
   const [revealedByIndex, setRevealedByIndex] = createSignal<Record<number, boolean>>({});
   const [copiedKey, setCopiedKey] = createSignal<string | null>(null);
   const [collaboratorExpanded, setCollaboratorExpanded] = createSignal(false);
 
-  const title = createMemo(() => props.title ?? "Share workspace");
+  const title = createMemo(() => props.title ?? translate("share.title"));
   const note = createMemo(() => props.note?.trim() ?? "");
   const accessFields = createMemo(() => props.fields.filter((field) => !isInviteField(field.label)));
   const collaboratorField = createMemo(() => accessFields().find((field) => isCollaboratorField(field.label)) ?? null);
@@ -115,7 +118,7 @@ export default function ShareWorkspaceModal(props: {
     return (
       <div class="group">
         <label class="text-[11px] uppercase tracking-wider font-medium text-gray-10 mb-1.5 block">
-          {displayFieldLabel(field)}
+          {displayFieldLabel(field, translate)}
         </label>
         <div class="relative flex items-center">
           <input
@@ -135,7 +138,7 @@ export default function ShareWorkspaceModal(props: {
                 }
                 disabled={!field.value}
                 class="p-1.5 text-gray-10 hover:text-gray-12 hover:bg-gray-3 rounded-md transition-colors disabled:opacity-50"
-                title={revealed() ? "Hide password" : "Reveal password"}
+                title={revealed() ? translate("share.hide_password") : translate("share.reveal_password")}
               >
                 <Show when={revealed()} fallback={<Eye size={14} />}>
                   <EyeOff size={14} />
@@ -146,7 +149,7 @@ export default function ShareWorkspaceModal(props: {
               onClick={() => handleCopy(field.value, key())}
               disabled={!field.value}
               class="p-1.5 text-gray-10 hover:text-gray-12 hover:bg-gray-3 rounded-md transition-colors disabled:opacity-50"
-              title="Copy"
+              title={translate("share.copy")}
             >
               <Show when={copiedKey() === key()} fallback={<Copy size={14} />}>
                 <Check size={14} class="text-emerald-10" />
@@ -179,7 +182,7 @@ export default function ShareWorkspaceModal(props: {
           disabled={Boolean(disabledReason) || !createAction || busy}
           class="mt-3 w-full rounded-full bg-dls-text px-5 py-3 text-[13px] font-medium text-dls-surface shadow-sm transition-colors hover:bg-gray-12 active:scale-[0.99] disabled:opacity-50"
         >
-          {busy ? "Publishing..." : createLabel}
+          {busy ? translate("share.publishing") : createLabel}
         </button>
       }
     >
@@ -193,7 +196,7 @@ export default function ShareWorkspaceModal(props: {
         <button
           onClick={() => handleCopy(value ?? "", copyKey)}
           class="p-1.5 hover:bg-gray-3 text-gray-11 hover:text-gray-12 rounded-md transition-colors"
-          title="Copy link"
+          title={translate("share.copy_link")}
         >
           <Show when={copiedKey() === copyKey} fallback={<Copy size={14} />}>
             <Check size={14} class="text-emerald-10" />
@@ -205,7 +208,7 @@ export default function ShareWorkspaceModal(props: {
         disabled={busy}
         class="mt-3 w-full rounded-full bg-gray-2 px-4 py-2 text-[12px] font-medium text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
       >
-        {busy ? "Publishing..." : regenerateLabel}
+        {busy ? translate("share.publishing") : regenerateLabel}
       </button>
     </Show>
   );
@@ -222,8 +225,8 @@ export default function ShareWorkspaceModal(props: {
             <button
               onClick={props.onClose}
               class="absolute top-3 right-3 p-1 text-gray-9 hover:text-gray-12 hover:bg-gray-3 rounded-md transition-colors"
-              aria-label="Close"
-              title="Close"
+              aria-label={translate("share.close")}
+              title={translate("share.close")}
             >
               <X size={16} />
             </button>
@@ -232,8 +235,8 @@ export default function ShareWorkspaceModal(props: {
               <button
                 onClick={() => setActiveView("chooser")}
                 class="absolute top-3 left-3 p-1 text-gray-9 hover:text-gray-12 hover:bg-gray-3 rounded-md transition-colors"
-                aria-label="Back"
-                title="Back to share options"
+                aria-label={translate("share.back")}
+                title={translate("share.back_to_options")}
               >
                 <ArrowLeft size={16} />
               </button>
@@ -243,8 +246,8 @@ export default function ShareWorkspaceModal(props: {
               <div class="min-w-0">
                 <h2 class="text-[14px] font-medium text-dls-text tracking-tight truncate">
                   <Show when={activeView() === "chooser"}>{title()}</Show>
-                  <Show when={activeView() === "template"}>Share a template</Show>
-                  <Show when={activeView() === "access"}>Access workspace remotely</Show>
+                  <Show when={activeView() === "template"}>{translate("share.tab_template")}</Show>
+                  <Show when={activeView() === "access"}>{translate("share.tab_remote")}</Show>
                 </h2>
                 <div class="mt-0.5 text-[12px] text-gray-10 truncate">{props.workspaceName}</div>
               </div>
@@ -263,9 +266,9 @@ export default function ShareWorkspaceModal(props: {
                     <Rocket size={18} />
                   </div>
                   <div class="flex-1">
-                    <h3 class="text-[13px] font-medium text-dls-text">Share a template</h3>
+                    <h3 class="text-[13px] font-medium text-dls-text">{translate("share.tab_template")}</h3>
                     <p class="text-[12px] text-gray-10 leading-snug mt-0.5 pr-4">
-                      Share your setup and defaults so someone else can start from the same environment.
+                      {translate("share.template_desc")}
                     </p>
                   </div>
                 </button>
@@ -279,9 +282,9 @@ export default function ShareWorkspaceModal(props: {
                     <MonitorUp size={18} />
                   </div>
                   <div class="flex-1">
-                    <h3 class="text-[13px] font-medium text-dls-text">Access workspace remotely</h3>
+                    <h3 class="text-[13px] font-medium text-dls-text">{translate("share.tab_remote")}</h3>
                     <p class="text-[12px] text-gray-10 leading-snug mt-0.5 pr-4">
-                      Copy the connection details needed to reach this live workspace from another machine or messaging surface.
+                      {translate("share.access_section_desc")}
                     </p>
                   </div>
                 </button>
@@ -291,15 +294,15 @@ export default function ShareWorkspaceModal(props: {
             <Show when={activeView() === "template"}>
               <div class="space-y-6 pt-4 animate-in fade-in slide-in-from-right-4 duration-300">
                 <div class="text-[12px] text-gray-10">
-                  Share a reusable setup without granting live access to this running workspace.
+                  {translate("share.reusable_desc")}
                 </div>
 
                 <div class="space-y-3">
                   <div class="flex items-center gap-2 mb-1">
                     <FolderCode size={16} class="text-gray-9 shrink-0" />
                     <div class="flex-1">
-                      <h3 class="text-[13px] font-medium text-dls-text">Workspace template</h3>
-                      <p class="text-[12px] text-gray-10 leading-tight mt-0.5">Share the core setup and workspace defaults.</p>
+                      <h3 class="text-[13px] font-medium text-dls-text">{translate("share.template_section_title")}</h3>
+                      <p class="text-[12px] text-gray-10 leading-tight mt-0.5">{translate("share.template_section_desc")}</p>
                     </div>
                   </div>
 
@@ -317,8 +320,8 @@ export default function ShareWorkspaceModal(props: {
                     "share-workspace-profile",
                     props.onShareWorkspaceProfile,
                     props.shareWorkspaceProfileBusy,
-                    "Create Template Link",
-                    "Regenerate Link",
+                    translate("share.create_template_link"),
+                    translate("share.regenerate_link"),
                     props.onShareWorkspaceProfile,
                     props.shareWorkspaceProfileDisabledReason,
                   )}
@@ -330,15 +333,15 @@ export default function ShareWorkspaceModal(props: {
               <div class="space-y-6 pt-4 animate-in fade-in slide-in-from-right-4 duration-300">
                 <div class="rounded-md border border-amber-6/40 bg-amber-3/30 px-3 py-2 text-[12px] text-amber-11 flex items-start gap-2">
                   <span class="mt-0.5">⚠️</span>
-                  <span class="leading-relaxed">Share with trusted people only. These credentials grant live access to this workspace.</span>
+                  <span class="leading-relaxed">{translate("share.live_access_warning")}</span>
                 </div>
 
                 <div class="flex items-center justify-between gap-3 rounded-[20px] border border-dls-border bg-gray-2/30 px-3 py-3">
                   <div class="flex items-center gap-2 min-w-0">
                     <MessageSquare size={16} class="text-gray-9 shrink-0" />
                     <div class="min-w-0">
-                      <h4 class="text-[13px] font-medium text-dls-text">Connect messaging</h4>
-                      <p class="text-[12px] text-gray-10 mt-0.5 truncate">Use this workspace from Slack, Telegram, and others.</p>
+                      <h4 class="text-[13px] font-medium text-dls-text">{translate("share.connect_messaging_title")}</h4>
+                      <p class="text-[12px] text-gray-10 mt-0.5 truncate">{translate("share.connect_messaging_desc")}</p>
                     </div>
                   </div>
                   <button
@@ -346,7 +349,7 @@ export default function ShareWorkspaceModal(props: {
                     disabled={!props.onOpenBots}
                     class="px-3 py-1.5 bg-gray-2 hover:bg-gray-3 rounded-md text-[12px] font-medium text-dls-text transition-colors disabled:opacity-50"
                   >
-                    Setup
+                    {translate("share.setup_button")}
                   </button>
                 </div>
 
@@ -365,7 +368,7 @@ export default function ShareWorkspaceModal(props: {
                         onClick={() => setCollaboratorExpanded((value) => !value)}
                         aria-expanded={collaboratorExpanded()}
                       >
-                        <span>Optional collaborator access</span>
+                        <span>{translate("share.collaborator_access")}</span>
                         <ChevronDown
                           size={13}
                           class={`shrink-0 transition-transform ${collaboratorExpanded() ? "rotate-180" : ""}`}
@@ -373,7 +376,7 @@ export default function ShareWorkspaceModal(props: {
                       </button>
                       <Show when={collaboratorExpanded()}>
                         <div class="mt-3 rounded-[20px] border border-dls-border bg-gray-2/30 px-3 py-3">
-                          <div class="mb-2 text-[11px] text-gray-9">Routine access without permission approvals.</div>
+                          <div class="mb-2 text-[11px] text-gray-9">{translate("share.collaborator_desc")}</div>
                           {renderCredentialField(field(), () => 0, "collaborator")}
                         </div>
                       </Show>

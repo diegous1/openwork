@@ -6,6 +6,7 @@ import { ArrowUp, AtSign, Check, ChevronDown, File as FileIcon, Paperclip, Squar
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { t, currentLocale } from "../../../i18n";
 
 type MentionOption = {
   id: string;
@@ -442,6 +443,7 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 };
 
 export default function Composer(props: ComposerProps) {
+  const translate = (key: string) => t(key, currentLocale());
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let inboxFileInputRef: HTMLInputElement | undefined;
@@ -1589,7 +1591,7 @@ export default function Composer(props: ComposerProps) {
                 <div class="max-h-64 overflow-y-auto bg-dls-surface p-2" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                   <Show
                     when={mentionVisible().length}
-                    fallback={<div class="px-3 py-2 text-xs text-gray-10">No matches found.</div>}
+                    fallback={<div class="px-3 py-2 text-xs text-gray-10">{translate("session.no_mentions_match")}</div>}
                   >
                     <For each={mentionVisible()}>
                       {(option: MentionOption) => {
@@ -1652,7 +1654,7 @@ export default function Composer(props: ComposerProps) {
                     when={slashFiltered().length}
                     fallback={
                       <div class="px-3 py-2 text-xs text-gray-10">
-                        {slashLoading() ? "Loading commands..." : "No commands found."}
+                        {slashLoading() ? translate("session.loading_commands") : translate("session.no_commands_found")}
                       </div>
                     }
                   >
@@ -1699,8 +1701,8 @@ export default function Composer(props: ComposerProps) {
                 class="w-full mb-2 flex items-center justify-between gap-3 rounded-xl border border-green-7/20 bg-green-7/10 px-3 py-2 text-left text-sm text-green-12 transition-colors hover:bg-green-7/15"
                 onClick={props.onNotionBannerClick}
               >
-                <span>Try it now: set up my CRM in Notion</span>
-                <span class="text-xs text-green-12 font-medium">Insert prompt</span>
+                <span>{translate("session.promo_try_it")}</span>
+                <span class="text-xs text-green-12 font-medium">{translate("session.insert_prompt")}</span>
               </button>
             </Show>
 
@@ -1752,7 +1754,7 @@ export default function Composer(props: ComposerProps) {
                         class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] text-gray-11 hover:bg-gray-3"
                         onClick={() => inboxFileInputRef?.click()}
                       >
-                        Upload to shared folder
+                        {translate("session.upload_shared_folder")}
                       </button>
                     </Show>
                   </div>
@@ -1764,7 +1766,7 @@ export default function Composer(props: ComposerProps) {
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
                     <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
-                        Describe your task...
+                        {translate("session.task_placeholder")}
                     </div>
                   </Show>
                     <div
@@ -1837,10 +1839,10 @@ export default function Composer(props: ComposerProps) {
                                 ? "bg-gray-4 text-gray-10"
                                 : "bg-dls-accent text-white hover:bg-[var(--dls-accent-hover)]"
                                 }`}
-                              title="Run task"
+                              title={translate("session.run_task")}
                             >
                               <ArrowUp size={15} />
-                              <span>Run task</span>
+                              <span>{translate("session.run_task")}</span>
                             </button>
                           }
                         >
@@ -1848,10 +1850,10 @@ export default function Composer(props: ComposerProps) {
                             type="button"
                             onClick={() => props.onStop()}
                             class="inline-flex items-center gap-2 rounded-full bg-gray-12 px-4 py-2 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
-                            title="Stop"
+                            title={translate("session.stop")}
                           >
                             <Square size={12} fill="currentColor" />
-                            <span>Stop</span>
+                            <span>{translate("session.stop")}</span>
                           </button>
                         </Show>
                       </div>
@@ -1872,7 +1874,7 @@ export default function Composer(props: ComposerProps) {
                 onClick={props.onToggleAgentPicker}
                 disabled={props.busy}
                 aria-expanded={props.agentPickerOpen}
-                title="Agent"
+                title={translate("session.agent_label")}
               >
                 <span class="max-w-[140px] truncate">{props.agentLabel}</span>
                 <ChevronDown size={13} />
@@ -1881,14 +1883,14 @@ export default function Composer(props: ComposerProps) {
               <Show when={props.agentPickerOpen}>
                 <div class="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                   <div class="border-b border-dls-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                    Agent
+                    {translate("session.agent_label")}
                   </div>
 
                   <div class="p-2 space-y-1 max-h-64 overflow-y-auto" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                     <Show
                       when={!props.agentPickerBusy}
                       fallback={
-                        <div class="px-3 py-2 text-xs text-gray-10">Loading agents...</div>
+                        <div class="px-3 py-2 text-xs text-gray-10">{translate("session.loading_agents")}</div>
                       }
                     >
                       <Show when={!props.agentPickerError}>
@@ -1903,7 +1905,7 @@ export default function Composer(props: ComposerProps) {
                             props.onSelectAgent(null);
                           }}
                         >
-                          <span>Default agent</span>
+                          <span>{translate("session.default_agent")}</span>
                           <Show when={!props.selectedAgent}>
                             <Check size={14} class="text-gray-10" />
                           </Show>
