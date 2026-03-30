@@ -6,9 +6,10 @@ import type {
   BundleUrls,
   Frontmatter,
   NormalizedBundle,
-  OgImageUrlSet,
   NormalizedCommandItem,
   NormalizedSkillItem,
+  NormalizedPortableFileItem,
+  OgImageUrlSet,
   OpenInAppUrls,
   RequestLike,
   ValidationResult,
@@ -20,10 +21,9 @@ import {
   type OgImageVariant,
 } from "./og-image-variants.ts";
 
-export const OPENWORK_SITE_URL = "https://openwork.software";
-export const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
-export const DEFAULT_PUBLIC_BASE_URL = "https://share.openwork.software";
-export const DEFAULT_OPENWORK_APP_URL = "https://app.openwork.software";
+export const OPENWORK_SITE_URL = "https://openworklabs.com";
+export const OPENWORK_DOWNLOAD_URL = "https://openworklabs.com/download";
+export const DEFAULT_PUBLIC_BASE_URL = "https://share.openworklabs.com";
 export const SHARE_EASE = "cubic-bezier(0.31, 0.325, 0, 0.92)";
 
 export function maybeString(value: unknown): string {
@@ -45,10 +45,6 @@ export function getEnv(name: string, fallback = ""): string {
 
 export function normalizeBaseUrl(input: unknown): string {
   return String(input ?? "").trim().replace(/\/+$/, "");
-}
-
-export function normalizeAppUrl(input: unknown): string {
-  return normalizeBaseUrl(input);
 }
 
 export function setCors(
@@ -92,6 +88,9 @@ export function escapeJsonForScript(rawJson: string): string {
 
 export function humanizeType(type: unknown): string {
   if (!type) return "Bundle";
+  if (String(type).trim().toLowerCase() === "workspace-profile") {
+    return "Workspace Template";
+  }
   return String(type)
     .split("-")
     .filter(Boolean)
@@ -183,24 +182,9 @@ export function buildOpenInAppUrls(shareUrl: string, options: { label?: string }
   if (label) query.set("ow_label", label.slice(0, 120));
 
   const appScheme = (getEnv("PUBLIC_OPENWORK_APP_SCHEME", "openwork") || "openwork").trim().toLowerCase();
-  const openInAppDeepLink = `${appScheme}://import-bundle?${query.toString()}`;
-  const appUrl = normalizeAppUrl(getEnv("PUBLIC_OPENWORK_APP_URL", DEFAULT_OPENWORK_APP_URL)) || DEFAULT_OPENWORK_APP_URL;
-
-  try {
-    const url = new URL(appUrl);
-    for (const [key, value] of query.entries()) {
-      url.searchParams.set(key, value);
-    }
-    return {
-      openInAppDeepLink,
-      openInWebAppUrl: url.toString(),
-    };
-  } catch {
-    return {
-      openInAppDeepLink,
-      openInWebAppUrl: `${DEFAULT_OPENWORK_APP_URL}?${query.toString()}`,
-    };
-  }
+  return {
+    openInAppDeepLink: `${appScheme}://import-bundle?${query.toString()}`,
+  };
 }
 
 export function wantsDownload(req: RequestLike): boolean {
@@ -251,6 +235,43 @@ function normalizeCommandItem(value: unknown): NormalizedCommandItem | null {
     model: maybeString(record.model).trim(),
     subtask: record.subtask === true,
   };
+}
+
+function normalizePortableFileItem(value: unknown): NormalizedPortableFileItem | null {
+  const record = maybeObject(value);
+  if (!record) return null;
+  const path = maybeString(record.path).trim();
+  if (!path) return null;
+  return {
+    path,
+    content: maybeString(record.content),
+  };
+}
+
+function workspacePortableFiles(bundle: NormalizedBundle): NormalizedPortableFileItem[] {
+  return maybeArray(bundle.workspace?.files)
+    .map(normalizePortableFileItem)
+    .filter((file): file is NormalizedPortableFileItem => file !== null);
+}
+
+function basename(path: string): string {
+  const normalized = String(path ?? "").replaceAll("\\", "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? normalized;
+}
+
+function templateFilePreviewMeta(path: string): { kind: PreviewItem["kind"]; tone: PreviewItem["tone"]; label: string } {
+  const normalized = String(path ?? "").toLowerCase();
+  if (normalized.startsWith(".opencode/agents/")) {
+    return { kind: "Agent", tone: "agent", label: "Agent file" };
+  }
+  if (normalized.startsWith(".opencode/commands/")) {
+    return { kind: "Command", tone: "command", label: "Command file" };
+  }
+  if (normalized.startsWith(".opencode/skills/")) {
+    return { kind: "Skill", tone: "skill", label: "Skill file" };
+  }
+  return { kind: "Config", tone: "config", label: "Template file" };
 }
 
 export function parseBundle(rawJson: string): NormalizedBundle {
@@ -322,6 +343,7 @@ export function getBundleCounts(bundle: NormalizedBundle): BundleCounts {
   const openwork = maybeObject(bundle.workspace?.openwork);
   const genericConfig = maybeObject(bundle.workspace?.config);
   const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((c): c is NormalizedCommandItem => c !== null);
+  const files = workspacePortableFiles(bundle);
   const agentEntries = Object.entries(maybeObject(opencode?.agent) ?? {});
   const mcpEntries = Object.entries(maybeObject(opencode?.mcp) ?? {});
   const opencodeConfigKeys = Object.keys(opencode ?? {}).filter((key) => !["agent", "mcp"].includes(key));
@@ -339,6 +361,7 @@ export function getBundleCounts(bundle: NormalizedBundle): BundleCounts {
     agentCount: agentEntries.length,
     mcpCount: mcpEntries.length,
     configCount: (openwork ? 1 : 0) + (opencodeConfigKeys.length ? 1 : 0) + Object.keys(genericConfig ?? {}).length,
+    fileCount: files.length,
     hasConfig: Boolean(openwork || opencodeConfigKeys.length || genericConfig),
   };
 }
@@ -443,6 +466,16 @@ export function collectBundleItems(bundle: NormalizedBundle, limit = 8): Preview
         kind: "Config",
         meta: "Config file",
         tone: "config",
+      });
+    }
+
+    for (const file of workspacePortableFiles(bundle)) {
+      const preview = templateFilePreviewMeta(file.path);
+      items.push({
+        name: basename(file.path),
+        kind: preview.kind,
+        meta: file.path,
+        tone: preview.tone,
       });
     }
   }
@@ -584,6 +617,18 @@ export function buildBundlePreview(bundle: NormalizedBundle): {
       text: buildJsonPreview(value, `{\n  "${name}": {}\n}`),
       tone: "config",
       label: `Config preview · ${extension}`,
+    });
+  }
+
+  const files = workspacePortableFiles(bundle);
+  if (files.length) {
+    const firstFile = files[0]!;
+    const preview = templateFilePreviewMeta(firstFile.path);
+    return buildBundlePreviewSelection({
+      filename: basename(firstFile.path),
+      text: buildTextPreview(firstFile.content, `# ${basename(firstFile.path) || "OpenWork portable file"}`),
+      tone: preview.tone,
+      label: `${preview.label} · ${firstFile.path}`,
     });
   }
 
@@ -738,6 +783,21 @@ export function buildBundlePreviewSelections(bundle: NormalizedBundle): {
     }));
   }
 
+  const files = workspacePortableFiles(bundle);
+  if (files.length) {
+    selections.push(...files.map((file, index) => {
+      const preview = templateFilePreviewMeta(file.path);
+      return {
+        id: `workspace-file-${index}`,
+        name: basename(file.path),
+        filename: basename(file.path),
+        text: buildTextPreview(file.content, `# ${basename(file.path) || `File ${index + 1}`}`),
+        tone: preview.tone,
+        label: `${preview.label} · ${file.path}`,
+      };
+    }));
+  }
+
   if (selections.length) return selections;
 
   const preview = buildBundlePreview(bundle);
@@ -776,6 +836,7 @@ export function buildBundleNarrative(bundle: NormalizedBundle): string {
   if (counts.mcpCount) parts.push(`${counts.mcpCount} MCP${counts.mcpCount === 1 ? "" : "s"}`);
   if (counts.commandCount) parts.push(`${counts.commandCount} command${counts.commandCount === 1 ? "" : "s"}`);
   if (counts.configCount) parts.push(`${counts.configCount} config${counts.configCount === 1 ? "" : "s"}`);
+  if (counts.fileCount) parts.push(`${counts.fileCount} portable file${counts.fileCount === 1 ? "" : "s"}`);
   return parts.length
     ? `${parts.join(", ")} bundled into a worker package that imports through OpenWork with one step.`
     : "Worker configuration bundle prepared for OpenWork import.";
@@ -801,7 +862,7 @@ export function buildStatusMarkup({
   <style>
     @font-face {
       font-family: "FK Raster Roman Compact Smooth";
-      src: url("https://openwork.software/fonts/FKRasterRomanCompact-Smooth.woff2") format("woff2");
+      src: url("https://openworklabs.com/fonts/FKRasterRomanCompact-Smooth.woff2") format("woff2");
       font-weight: 400;
       font-style: normal;
       font-display: swap;

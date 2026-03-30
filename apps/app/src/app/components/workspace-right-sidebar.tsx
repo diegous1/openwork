@@ -12,7 +12,7 @@ import {
   Zap,
 } from "lucide-solid";
 
-import type { DashboardTab } from "../types";
+import type { SettingsTab } from "../types";
 import type { OpenworkServerClient } from "../lib/openwork-server";
 import InboxPanel from "./session/inbox-panel";
 
@@ -20,12 +20,12 @@ type Props = {
   expanded: boolean;
   mobile?: boolean;
   showSelection?: boolean;
-  tab: DashboardTab;
+  settingsTab?: SettingsTab;
   developerMode: boolean;
   activeWorkspaceLabel: string;
   activeWorkspaceType: "local" | "remote";
   openworkServerClient: OpenworkServerClient | null;
-  openworkServerWorkspaceId: string | null;
+  runtimeWorkspaceId: string | null;
   inboxId: string;
   onToggleExpanded: () => void;
   onCloseMobile?: () => void;
@@ -106,32 +106,32 @@ export default function WorkspaceRightSidebar(props: Props) {
           {sidebarButton(
             translate("session.sidebar_automations"),
             <History size={18} />,
-            showSelection() && props.tab === "scheduled",
+            showSelection() && props.settingsTab === "automations",
             props.onOpenAutomations,
           )}
           {sidebarButton(
             "Skills",
             <Zap size={18} />,
-            showSelection() && props.tab === "skills",
+            showSelection() && props.settingsTab === "skills",
             props.onOpenSkills,
           )}
           {sidebarButton(
             translate("session.sidebar_extensions"),
             <Box size={18} />,
-            showSelection() && (props.tab === "mcp" || props.tab === "plugins"),
+            showSelection() && props.settingsTab === "extensions",
             props.onOpenExtensions,
           )}
           {sidebarButton(
             "Messaging",
             <MessageCircle size={18} />,
-            showSelection() && props.tab === "identities",
+            showSelection() && props.settingsTab === "messaging",
             props.onOpenMessaging,
           )}
           <Show when={props.developerMode}>
             {sidebarButton(
               "Advanced",
               <SlidersHorizontal size={18} />,
-              showSelection() && props.tab === "config",
+                showSelection() && props.settingsTab === "advanced",
               props.onOpenAdvanced,
             )}
           </Show>
@@ -142,7 +142,7 @@ export default function WorkspaceRightSidebar(props: Props) {
             <InboxPanel
               id={props.inboxId}
               client={props.openworkServerClient}
-              workspaceId={props.openworkServerWorkspaceId}
+              workspaceId={props.runtimeWorkspaceId}
               onToast={props.onInboxToast}
             />
           </div>
@@ -153,7 +153,7 @@ export default function WorkspaceRightSidebar(props: Props) {
         {sidebarButton(
           "Settings",
           <Settings size={18} />,
-          showSelection() && (props.tab === "settings" || props.tab === "config" || props.tab === "identities"),
+          showSelection() && props.settingsTab === "general",
           props.onOpenSettings,
         )}
       </div>

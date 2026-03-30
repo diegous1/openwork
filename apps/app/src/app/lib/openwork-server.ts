@@ -43,7 +43,8 @@ export type OpenworkServerDiagnostics = {
   approval: { mode: "manual" | "auto"; timeoutMs: number };
   corsOrigins: string[];
   workspaceCount: number;
-  activeWorkspaceId: string | null;
+  activeWorkspaceId?: string | null;
+  selectedWorkspaceId?: string | null;
   workspace: OpenworkWorkspaceInfo | null;
   authorizedRoots: string[];
   server: { host: string; port: number; configPath?: string | null };
@@ -86,6 +87,7 @@ export type OpenworkServerSettings = {
   urlOverride?: string;
   portOverride?: number;
   token?: string;
+  remoteAccessEnabled?: boolean;
 };
 
 export type OpenworkWorkspaceInfo = WorkspaceInfo & {
@@ -154,85 +156,6 @@ export type OpenworkWorkspaceFileWriteResult = {
   bytes: number;
   updatedAt: number;
   revision?: string;
-};
-
-export type OpenworkFileSession = {
-  id: string;
-  workspaceId: string;
-  createdAt: number;
-  expiresAt: number;
-  ttlMs: number;
-  canWrite: boolean;
-};
-
-export type OpenworkFileCatalogEntry = {
-  path: string;
-  kind: "file" | "dir";
-  size: number;
-  mtimeMs: number;
-  revision: string;
-};
-
-export type OpenworkFileSessionEvent = {
-  id: string;
-  seq: number;
-  workspaceId: string;
-  type: "write" | "delete" | "rename" | "mkdir";
-  path: string;
-  toPath?: string;
-  revision?: string;
-  timestamp: number;
-};
-
-export type OpenworkFileReadBatchResult = {
-  items: Array<
-    | {
-        ok: true;
-        path: string;
-        kind: "file";
-        bytes: number;
-        updatedAt: number;
-        revision: string;
-        contentBase64: string;
-      }
-    | {
-        ok: false;
-        path: string;
-        code: string;
-        message: string;
-        maxBytes?: number;
-        size?: number;
-      }
-  >;
-};
-
-export type OpenworkFileWriteBatchResult = {
-  items: Array<
-    | {
-        ok: true;
-        path: string;
-        bytes: number;
-        updatedAt: number;
-        revision: string;
-        previousRevision?: string | null;
-      }
-    | {
-        ok: false;
-        path: string;
-        code: string;
-        message: string;
-        expectedRevision?: string;
-        currentRevision?: string | null;
-        maxBytes?: number;
-        size?: number;
-      }
-  >;
-  cursor: number;
-};
-
-export type OpenworkFileOpsBatchResult = {
-  items: Array<Record<string, unknown>>;
-  cursor: number;
 };
 
 export type OpenworkCommandItem = {
@@ -449,6 +372,14 @@ export type OpenworkWorkspaceExport = {
   openwork?: Record<string, unknown>;
   skills?: Array<{ name: string; description?: string; trigger?: string; content: string }>;
   commands?: Array<{ name: string; description?: string; template?: string }>;
+  files?: Array<{ path: string; content: string }>;
+};
+
+export type OpenworkBlueprintSessionsMaterializeResult = {
+  ok: boolean;
+  created: Array<{ templateId: string; sessionId: string; title: string }>;
+  existing: Array<{ templateId: string; sessionId: string }>;
+  openSessionId: string | null;
 };
 
 export type OpenworkArtifactItem = {
@@ -521,11 +452,14 @@ export type OpenworkReloadEvent = {
   timestamp: number;
 };
 
+// Fallback for explicit server-mode URL derivation. Desktop local workers replace this
+// with the persisted runtime-discovered port once the host reports it.
 export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";
 const STORAGE_TOKEN = "openwork.server.token";
+const STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
 
 export function normalizeOpenworkServerUrl(input: string) {
   const trimmed = input.trim();
@@ -583,17 +517,10 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
   }
 }
 
-export const DEFAULT_OPENWORK_CONNECT_APP_URL = "https://app.openwork.software";
-
 const OPENWORK_INVITE_PARAM_URL = "ow_url";
 const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
 const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
 const OPENWORK_INVITE_PARAM_AUTO_CONNECT = "ow_auto_connect";
-const OPENWORK_INVITE_PARAM_BUNDLE = "ow_bundle";
-const OPENWORK_INVITE_PARAM_BUNDLE_INTENT = "ow_intent";
-const OPENWORK_INVITE_PARAM_BUNDLE_SOURCE = "ow_source";
-const OPENWORK_INVITE_PARAM_BUNDLE_ORG = "ow_org";
-const OPENWORK_INVITE_PARAM_BUNDLE_LABEL = "ow_label";
 
 export type OpenworkConnectInvite = {
   url: string;
@@ -601,69 +528,6 @@ export type OpenworkConnectInvite = {
   startup?: "server";
   autoConnect?: boolean;
 };
-
-export type OpenworkBundleInviteIntent = "new_worker" | "import_current";
-
-export type OpenworkBundleInvite = {
-  bundleUrl: string;
-  intent: OpenworkBundleInviteIntent;
-  source?: string;
-  orgId?: string;
-  label?: string;
-};
-
-function normalizeOpenworkBundleInviteIntent(value: string | null | undefined): OpenworkBundleInviteIntent {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (normalized === "new_worker" || normalized === "new-worker" || normalized === "newworker") {
-    return "new_worker";
-  }
-  return "import_current";
-}
-
-export function buildOpenworkConnectInviteUrl(input: {
-  workspaceUrl: string;
-  token?: string | null;
-  appUrl?: string | null;
-  startup?: "server";
-  autoConnect?: boolean;
-}) {
-  const workspaceUrl = normalizeOpenworkServerUrl(input.workspaceUrl ?? "") ?? "";
-  if (!workspaceUrl) return "";
-
-  const base = normalizeOpenworkServerUrl(input.appUrl ?? "") ?? DEFAULT_OPENWORK_CONNECT_APP_URL;
-
-  try {
-    const url = new URL(base);
-    const search = new URLSearchParams(url.search);
-    search.set(OPENWORK_INVITE_PARAM_URL, workspaceUrl);
-
-    const token = input.token?.trim() ?? "";
-    if (token) {
-      search.set(OPENWORK_INVITE_PARAM_TOKEN, token);
-    }
-
-    const startup = input.startup ?? "server";
-    search.set(OPENWORK_INVITE_PARAM_STARTUP, startup);
-    if (input.autoConnect) {
-      search.set(OPENWORK_INVITE_PARAM_AUTO_CONNECT, "1");
-    }
-
-    url.search = search.toString();
-    return url.toString();
-  } catch {
-    const search = new URLSearchParams();
-    search.set(OPENWORK_INVITE_PARAM_URL, workspaceUrl);
-    const token = input.token?.trim() ?? "";
-    if (token) {
-      search.set(OPENWORK_INVITE_PARAM_TOKEN, token);
-    }
-    search.set(OPENWORK_INVITE_PARAM_STARTUP, input.startup ?? "server");
-    if (input.autoConnect) {
-      search.set(OPENWORK_INVITE_PARAM_AUTO_CONNECT, "1");
-    }
-    return `${DEFAULT_OPENWORK_CONNECT_APP_URL}?${search.toString()}`;
-  }
-}
 
 export function readOpenworkConnectInviteFromSearch(input: string | URLSearchParams) {
   const search =
@@ -688,109 +552,6 @@ export function readOpenworkConnectInviteFromSearch(input: string | URLSearchPar
   } satisfies OpenworkConnectInvite;
 }
 
-export function buildOpenworkBundleInviteUrl(input: {
-  bundleUrl: string;
-  appUrl?: string | null;
-  intent?: OpenworkBundleInviteIntent;
-  source?: string | null;
-  orgId?: string | null;
-  label?: string | null;
-}) {
-  const rawBundleUrl = input.bundleUrl?.trim() ?? "";
-  if (!rawBundleUrl) return "";
-
-  let bundleUrl: string;
-  try {
-    bundleUrl = new URL(rawBundleUrl).toString();
-  } catch {
-    return "";
-  }
-
-  const base = normalizeOpenworkServerUrl(input.appUrl ?? "") ?? DEFAULT_OPENWORK_CONNECT_APP_URL;
-
-  try {
-    const url = new URL(base);
-    const search = new URLSearchParams(url.search);
-    const intent = normalizeOpenworkBundleInviteIntent(input.intent);
-    search.set(OPENWORK_INVITE_PARAM_BUNDLE, bundleUrl);
-    search.set(OPENWORK_INVITE_PARAM_BUNDLE_INTENT, intent);
-
-    const source = input.source?.trim() ?? "";
-    if (source) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_SOURCE, source);
-    }
-
-    const orgId = input.orgId?.trim() ?? "";
-    if (orgId) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_ORG, orgId);
-    }
-
-    const label = input.label?.trim() ?? "";
-    if (label) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_LABEL, label);
-    }
-
-    url.search = search.toString();
-    return url.toString();
-  } catch {
-    const search = new URLSearchParams();
-    const intent = normalizeOpenworkBundleInviteIntent(input.intent);
-    search.set(OPENWORK_INVITE_PARAM_BUNDLE, bundleUrl);
-    search.set(OPENWORK_INVITE_PARAM_BUNDLE_INTENT, intent);
-
-    const source = input.source?.trim() ?? "";
-    if (source) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_SOURCE, source);
-    }
-
-    const orgId = input.orgId?.trim() ?? "";
-    if (orgId) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_ORG, orgId);
-    }
-
-    const label = input.label?.trim() ?? "";
-    if (label) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_LABEL, label);
-    }
-
-    return `${DEFAULT_OPENWORK_CONNECT_APP_URL}?${search.toString()}`;
-  }
-}
-
-export function readOpenworkBundleInviteFromSearch(input: string | URLSearchParams) {
-  const search =
-    typeof input === "string"
-      ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
-      : input;
-
-  const rawBundleUrl = search.get(OPENWORK_INVITE_PARAM_BUNDLE)?.trim() ?? "";
-  if (!rawBundleUrl) return null;
-
-  let bundleUrl: string;
-  try {
-    const parsed = new URL(rawBundleUrl);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return null;
-    }
-    bundleUrl = parsed.toString();
-  } catch {
-    return null;
-  }
-
-  const intent = normalizeOpenworkBundleInviteIntent(search.get(OPENWORK_INVITE_PARAM_BUNDLE_INTENT));
-  const source = search.get(OPENWORK_INVITE_PARAM_BUNDLE_SOURCE)?.trim() ?? "";
-  const orgId = search.get(OPENWORK_INVITE_PARAM_BUNDLE_ORG)?.trim() ?? "";
-  const label = search.get(OPENWORK_INVITE_PARAM_BUNDLE_LABEL)?.trim() ?? "";
-
-  return {
-    bundleUrl,
-    intent,
-    source: source || undefined,
-    orgId: orgId || undefined,
-    label: label || undefined,
-  } satisfies OpenworkBundleInvite;
-}
-
 export function stripOpenworkConnectInviteFromUrl(input: string) {
   try {
     const url = new URL(input);
@@ -798,20 +559,6 @@ export function stripOpenworkConnectInviteFromUrl(input: string) {
     url.searchParams.delete(OPENWORK_INVITE_PARAM_TOKEN);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_STARTUP);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_AUTO_CONNECT);
-    return url.toString();
-  } catch {
-    return input;
-  }
-}
-
-export function stripOpenworkBundleInviteFromUrl(input: string) {
-  try {
-    const url = new URL(input);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE_INTENT);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE_SOURCE);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE_ORG);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE_LABEL);
     return url.toString();
   } catch {
     return input;
@@ -827,10 +574,12 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
     const portRaw = window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ?? "";
     const portOverride = portRaw ? Number(portRaw) : undefined;
     const token = window.localStorage.getItem(STORAGE_TOKEN) ?? undefined;
+    const remoteAccessRaw = window.localStorage.getItem(STORAGE_REMOTE_ACCESS) ?? "";
     return {
       urlOverride: urlOverride ?? undefined,
       portOverride: Number.isNaN(portOverride) ? undefined : portOverride,
       token: token?.trim() || undefined,
+      remoteAccessEnabled: remoteAccessRaw === "1",
     };
   } catch {
     return {};
@@ -843,6 +592,7 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
     const urlOverride = normalizeOpenworkServerUrl(next.urlOverride ?? "");
     const portOverride = typeof next.portOverride === "number" ? next.portOverride : undefined;
     const token = next.token?.trim() || undefined;
+    const remoteAccessEnabled = next.remoteAccessEnabled === true;
 
     if (urlOverride) {
       window.localStorage.setItem(STORAGE_URL_OVERRIDE, urlOverride);
@@ -860,6 +610,12 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
       window.localStorage.setItem(STORAGE_TOKEN, token);
     } else {
       window.localStorage.removeItem(STORAGE_TOKEN);
+    }
+
+    if (remoteAccessEnabled) {
+      window.localStorage.setItem(STORAGE_REMOTE_ACCESS, "1");
+    } else {
+      window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
     }
 
     return readOpenworkServerSettings();
@@ -920,6 +676,7 @@ export function clearOpenworkServerSettings() {
     window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
     window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     window.localStorage.removeItem(STORAGE_TOKEN);
+    window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
   } catch {
     // ignore
   }
@@ -1176,6 +933,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     opencodeRouter: 10_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
+    shareBundle: 20_000,
     binary: 60_000,
   };
 
@@ -1258,6 +1016,42 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: payload,
         timeoutMs: timeouts.workspaceImport,
+      }),
+    materializeBlueprintSessions: (workspaceId: string) =>
+      requestJson<OpenworkBlueprintSessionsMaterializeResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/blueprint/sessions/materialize`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          timeoutMs: timeouts.workspaceImport,
+        },
+      ),
+    publishBundle: (payload: unknown, bundleType: "skill" | "workspace-profile" | "skills-set", options?: { name?: string; baseUrl?: string | null; timeoutMs?: number }) =>
+      requestJson<{ url: string }>(baseUrl, "/share/bundles/publish", {
+        token,
+        hostToken,
+        method: "POST",
+        body: {
+          payload,
+          bundleType,
+          name: options?.name,
+          baseUrl: options?.baseUrl ?? undefined,
+          timeoutMs: options?.timeoutMs,
+        },
+        timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
+      }),
+    fetchBundle: (bundleUrl: string, options?: { timeoutMs?: number }) =>
+      requestJson<Record<string, unknown>>(baseUrl, "/share/bundles/fetch", {
+        token,
+        hostToken,
+        method: "POST",
+        body: {
+          bundleUrl,
+          timeoutMs: options?.timeoutMs,
+        },
+        timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
       }),
     getConfig: (workspaceId: string) =>
       requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
@@ -1720,103 +1514,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/inbox/${encodeURIComponent(inboxId)}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
-
-    createFileSession: (workspaceId: string, options?: { ttlSeconds?: number; write?: boolean }) =>
-      requestJson<{ session: OpenworkFileSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/files/sessions`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: {
-          ...(typeof options?.ttlSeconds === "number" ? { ttlSeconds: options.ttlSeconds } : {}),
-          ...(typeof options?.write === "boolean" ? { write: options.write } : {}),
-        },
-      }),
-
-    renewFileSession: (sessionId: string, options?: { ttlSeconds?: number }) =>
-      requestJson<{ session: OpenworkFileSession }>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/renew`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: {
-          ...(typeof options?.ttlSeconds === "number" ? { ttlSeconds: options.ttlSeconds } : {}),
-        },
-      }),
-
-    closeFileSession: (sessionId: string) =>
-      requestJson<{ ok: boolean }>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}`, {
-        token,
-        hostToken,
-        method: "DELETE",
-      }),
-
-    getFileCatalogSnapshot: (
-      sessionId: string,
-      options?: { prefix?: string; after?: string; includeDirs?: boolean; limit?: number },
-    ) => {
-      const params = new URLSearchParams();
-      if (options?.prefix?.trim()) params.set("prefix", options.prefix.trim());
-      if (options?.after?.trim()) params.set("after", options.after.trim());
-      if (typeof options?.includeDirs === "boolean") params.set("includeDirs", options.includeDirs ? "true" : "false");
-      if (typeof options?.limit === "number") params.set("limit", String(options.limit));
-      const query = params.toString();
-      return requestJson<{
-        sessionId: string;
-        workspaceId: string;
-        generatedAt: number;
-        cursor: number;
-        total: number;
-        truncated: boolean;
-        nextAfter?: string;
-        items: OpenworkFileCatalogEntry[];
-      }>(
-        baseUrl,
-        `/files/sessions/${encodeURIComponent(sessionId)}/catalog/snapshot${query ? `?${query}` : ""}`,
-        { token, hostToken },
-      );
-    },
-
-    listFileSessionEvents: (sessionId: string, options?: { since?: number }) => {
-      const query = typeof options?.since === "number" ? `?since=${encodeURIComponent(String(options.since))}` : "";
-      return requestJson<{ items: OpenworkFileSessionEvent[]; cursor: number }>(
-        baseUrl,
-        `/files/sessions/${encodeURIComponent(sessionId)}/catalog/events${query}`,
-        { token, hostToken },
-      );
-    },
-
-    readFileBatch: (sessionId: string, paths: string[]) =>
-      requestJson<OpenworkFileReadBatchResult>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/read-batch`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: { paths },
-      }),
-
-    writeFileBatch: (
-      sessionId: string,
-      writes: Array<{ path: string; contentBase64: string; ifMatchRevision?: string; force?: boolean }>,
-    ) =>
-      requestJson<OpenworkFileWriteBatchResult>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/write-batch`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: { writes },
-      }),
-
-    runFileBatchOps: (
-      sessionId: string,
-      operations: Array<
-        | { type: "mkdir"; path: string }
-        | { type: "delete"; path: string; recursive?: boolean }
-        | { type: "rename"; from: string; to: string }
-      >,
-    ) =>
-      requestJson<OpenworkFileOpsBatchResult>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/ops`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: { operations },
-      }),
 
     readWorkspaceFile: (workspaceId: string, path: string) =>
       requestJson<OpenworkWorkspaceFileContent>(

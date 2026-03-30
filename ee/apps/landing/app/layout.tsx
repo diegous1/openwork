@@ -1,6 +1,7 @@
 import "./globals.css";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
+import { BotIdClient } from "botid/client";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -15,7 +16,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata = {
-  metadataBase: new URL("https://openwork.software"),
+  metadataBase: new URL("https://openworklabs.com"),
   title: "OpenWork — The open source Claude Cowork alternative",
   description:
     "Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across your org — with guardrails built in.",
@@ -31,6 +32,11 @@ export const metadata = {
   }
 };
 
+const protectedRoutes = [
+  { path: "/api/enterprise-contact", method: "POST" as const },
+  { path: "/api/app-feedback", method: "POST" as const },
+];
+
 export default function RootLayout({
   children
 }: {
@@ -39,6 +45,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <head>
+        <BotIdClient protect={protectedRoutes} />
         <Script
           id="posthog"
           strategy="beforeInteractive"
@@ -52,7 +59,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="antialiased">
+      <body className="overflow-x-hidden antialiased">
         {children}
       </body>
     </html>

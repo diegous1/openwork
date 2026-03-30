@@ -6,6 +6,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
+import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
@@ -25,6 +26,16 @@ import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_FAVICON_SVG, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
+import {
+  applyMaterializedBlueprintSessions,
+  normalizeBlueprintSessionTemplates,
+  readMaterializedBlueprintSessions,
+  sanitizeOpenworkTemplateConfig,
+} from "./blueprint-sessions.js";
+import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
+import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
+import { seedOpencodeSessionMessages } from "./opencode-db.js";
+import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -214,29 +225,6 @@ interface RequestContext {
   actor?: Actor;
 }
 
-type AgentLabSchedule =
-  | { kind: "interval"; seconds: number }
-  | { kind: "daily"; hour: number; minute: number }
-  | { kind: "weekly"; weekday: number; hour: number; minute: number };
-
-type AgentLabAutomation = {
-  id: string;
-  name: string;
-  enabled: boolean;
-  schedule: AgentLabSchedule;
-  prompt: string;
-  createdAt: number;
-  updatedAt?: number;
-  lastRunAt?: number;
-  lastRunSessionId?: string;
-};
-
-type AgentLabAutomationStore = {
-  schemaVersion: number;
-  updatedAt: number;
-  items: AgentLabAutomation[];
-};
-
 export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
@@ -294,7 +282,7 @@ export function startServer(config: ServerConfig) {
           const workspace = await resolveWorkspace(config, mount.workspaceId);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
-          const response = await proxyOpencodeRequest({ request, url, workspace, proxyPath: mount.restPath });
+          const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -357,7 +345,7 @@ export function startServer(config: ServerConfig) {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           proxyService = "opencode";
-          const response = await proxyOpencodeRequest({ request, url, workspace: config.workspaces[0] });
+          const response = await proxyOpencodeRequest({ config, request, url, workspace: config.workspaces[0] });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -476,8 +464,9 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
-async function fetchOpencodeJson(workspace: WorkspaceInfo, path: string, init: { method: string; body?: unknown }) {
-  const baseUrl = workspace.baseUrl?.trim() ?? "";
+async function fetchOpencodeJson(config: ServerConfig, workspace: WorkspaceInfo, path: string, init: { method: string; body?: unknown }) {
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
@@ -494,7 +483,7 @@ async function fetchOpencodeJson(workspace: WorkspaceInfo, path: string, init: {
     headers.set("x-opencode-directory", directory);
   }
 
-  const auth = buildOpencodeAuthHeader(workspace);
+  const auth = connection.authHeader ?? null;
   if (auth) {
     headers.set("Authorization", auth);
   }
@@ -532,13 +521,14 @@ function buildOpenCodeRouterProxyUrl(baseUrl: string, path: string, search: stri
 }
 
 async function proxyOpencodeRequest(input: {
+  config: ServerConfig;
   request: Request;
   url: URL;
   workspace?: WorkspaceInfo;
   proxyPath?: string;
 }) {
   const workspace = input.workspace;
-  const baseUrl = workspace?.baseUrl?.trim() ?? "";
+  const baseUrl = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
@@ -557,7 +547,7 @@ async function proxyOpencodeRequest(input: {
     headers.set("x-opencode-directory", directory);
   }
 
-  const auth = workspace ? buildOpencodeAuthHeader(workspace) : null;
+  const auth = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).authHeader ?? null : null;
   if (auth) {
     headers.set("Authorization", auth);
   }
@@ -800,119 +790,6 @@ function resolveInboxDir(workspaceRoot: string): string {
 
 function resolveOutboxDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "openwork", "outbox");
-}
-
-function resolveAgentLabDir(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "openwork", "agentlab");
-}
-
-function resolveAgentLabAutomationsPath(workspaceRoot: string): string {
-  return join(resolveAgentLabDir(workspaceRoot), "automations.json");
-}
-
-function resolveAgentLabLogsDir(workspaceRoot: string): string {
-  return join(resolveAgentLabDir(workspaceRoot), "logs");
-}
-
-function clampInt(value: unknown, options: { min: number; max: number; name: string }): number {
-  const num = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(num)) {
-    throw new ApiError(400, "invalid_payload", `${options.name} must be a number`);
-  }
-  const int = Math.trunc(num);
-  if (int < options.min || int > options.max) {
-    throw new ApiError(400, "invalid_payload", `${options.name} must be between ${options.min} and ${options.max}`);
-  }
-  return int;
-}
-
-function parseAgentLabSchedule(value: unknown): AgentLabSchedule {
-  if (!value || typeof value !== "object") {
-    throw new ApiError(400, "invalid_payload", "schedule is required");
-  }
-  const schedule = value as Record<string, unknown>;
-  const kind = typeof schedule.kind === "string" ? schedule.kind.trim() : "";
-  if (kind === "interval") {
-    const seconds = clampInt(schedule.seconds, { min: 60, max: 7 * 24 * 60 * 60, name: "schedule.seconds" });
-    return { kind: "interval", seconds };
-  }
-  if (kind === "daily") {
-    const hour = clampInt(schedule.hour, { min: 0, max: 23, name: "schedule.hour" });
-    const minute = clampInt(schedule.minute, { min: 0, max: 59, name: "schedule.minute" });
-    return { kind: "daily", hour, minute };
-  }
-  if (kind === "weekly") {
-    const weekday = clampInt(schedule.weekday, { min: 1, max: 7, name: "schedule.weekday" });
-    const hour = clampInt(schedule.hour, { min: 0, max: 23, name: "schedule.hour" });
-    const minute = clampInt(schedule.minute, { min: 0, max: 59, name: "schedule.minute" });
-    return { kind: "weekly", weekday, hour, minute };
-  }
-  throw new ApiError(400, "invalid_payload", "schedule.kind must be interval, daily, or weekly");
-}
-
-function validateAgentLabAutomationId(value: unknown): string {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw) {
-    throw new ApiError(400, "invalid_payload", "automation id is required");
-  }
-  if (raw.length > 80) {
-    throw new ApiError(400, "invalid_payload", "automation id is too long");
-  }
-  if (!/^[a-zA-Z0-9_-]+$/.test(raw)) {
-    throw new ApiError(400, "invalid_payload", "automation id must match /^[a-zA-Z0-9_-]+$/");
-  }
-  return raw;
-}
-
-async function readAgentLabAutomations(workspaceRoot: string): Promise<AgentLabAutomationStore> {
-  const path = resolveAgentLabAutomationsPath(workspaceRoot);
-  if (!(await exists(path))) {
-    return { schemaVersion: 1, updatedAt: Date.now(), items: [] };
-  }
-  try {
-    const raw = await readFile(path, "utf8");
-    const parsed = JSON.parse(raw) as Partial<AgentLabAutomationStore>;
-    const items = Array.isArray(parsed.items) ? parsed.items : [];
-    const normalized: AgentLabAutomation[] = [];
-    for (const item of items) {
-      const record = item as Partial<AgentLabAutomation>;
-      const id = typeof record.id === "string" ? record.id.trim() : "";
-      const name = typeof record.name === "string" ? record.name.trim() : "";
-      const prompt = typeof record.prompt === "string" ? record.prompt : "";
-      const enabled = typeof record.enabled === "boolean" ? record.enabled : true;
-      if (!id || !name || !prompt) continue;
-      let schedule: AgentLabSchedule;
-      try {
-        schedule = parseAgentLabSchedule(record.schedule);
-      } catch {
-        continue;
-      }
-      normalized.push({
-        id,
-        name,
-        enabled,
-        schedule,
-        prompt,
-        createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
-        updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : undefined,
-        lastRunAt: typeof record.lastRunAt === "number" ? record.lastRunAt : undefined,
-        lastRunSessionId: typeof record.lastRunSessionId === "string" ? record.lastRunSessionId : undefined,
-      });
-    }
-    return {
-      schemaVersion: typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : 1,
-      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
-      items: normalized,
-    };
-  } catch {
-    throw new ApiError(422, "invalid_json", "Failed to parse Agent Lab automations");
-  }
-}
-
-async function writeAgentLabAutomations(workspaceRoot: string, store: AgentLabAutomationStore): Promise<void> {
-  const path = resolveAgentLabAutomationsPath(workspaceRoot);
-  await ensureDir(dirname(path));
-  await writeFile(path, JSON.stringify({ ...store, updatedAt: Date.now() }, null, 2) + "\n", "utf8");
 }
 
 export function normalizeWorkspaceRelativePath(input: string, options: { allowSubdirs: boolean }): string {
@@ -1455,6 +1332,7 @@ function createRoutes(
       path: workspacePath,
       preset,
       workspaceType: "local",
+      ...inheritWorkspaceOpencodeConnection(config),
     };
 
     config.workspaces = [workspace, ...config.workspaces.filter((entry) => entry.id !== workspace.id)];
@@ -1654,7 +1532,7 @@ function createRoutes(
     }
 
     // OpenCode session deletion via the upstream API.
-    await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}`, {
+        await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
     });
 
@@ -2646,7 +2524,7 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     requireClientScope(ctx, "collaborator");
 
-    await reloadOpencodeEngine(workspace);
+      await reloadOpencodeEngine(config, workspace);
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -3552,13 +3430,13 @@ function createRoutes(
 
     // Best-effort disconnect so any active connection is torn down.
     try {
-      await fetchOpencodeJson(workspace, `/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST" });
+      await fetchOpencodeJson(config, workspace, `/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST" });
     } catch {
       // ignore
     }
 
     try {
-      await fetchOpencodeJson(workspace, `/mcp/${encodeURIComponent(name)}/auth`, { method: "DELETE" });
+      await fetchOpencodeJson(config, workspace, `/mcp/${encodeURIComponent(name)}/auth`, { method: "DELETE" });
     } catch (error) {
       // Treat missing credentials as a successful logout (idempotent).
       if (
@@ -3670,196 +3548,6 @@ function createRoutes(
     return jsonResponse({ ok: true });
   });
 
-  addRoute(routes, "GET", "/workspace/:id/agentlab/automations", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const store = await readAgentLabAutomations(workspace.path);
-    return jsonResponse({ items: store.items, updatedAt: store.updatedAt });
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/agentlab/automations", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
-
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-    const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
-    if (!name) {
-      throw new ApiError(400, "invalid_payload", "name is required");
-    }
-    if (!prompt) {
-      throw new ApiError(400, "invalid_payload", "prompt is required");
-    }
-
-    const schedule = parseAgentLabSchedule(body.schedule);
-    const id = body.id ? validateAgentLabAutomationId(body.id) : `agentlab_${shortId().replace(/-/g, "")}`;
-
-    const path = resolveAgentLabAutomationsPath(workspace.path);
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "agentlab.automations.upsert",
-      summary: `Upsert automation ${name}`,
-      paths: [path],
-    });
-
-    const store = await readAgentLabAutomations(workspace.path);
-    const now = Date.now();
-    const existingIndex = store.items.findIndex((item) => item.id === id);
-    if (existingIndex !== -1) {
-      const prev = store.items[existingIndex];
-      store.items[existingIndex] = {
-        ...prev,
-        id,
-        name,
-        enabled,
-        schedule,
-        prompt,
-        updatedAt: now,
-      };
-    } else {
-      store.items.unshift({
-        id,
-        name,
-        enabled,
-        schedule,
-        prompt,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-    await writeAgentLabAutomations(workspace.path, store);
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "agentlab.automations.upsert",
-      target: path,
-      summary: `Upserted automation ${name}`,
-      timestamp: now,
-    });
-
-    const next = await readAgentLabAutomations(workspace.path);
-    return jsonResponse({ items: next.items, updatedAt: next.updatedAt }, 201);
-  });
-
-  addRoute(routes, "DELETE", "/workspace/:id/agentlab/automations/:automationId", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const automationId = validateAgentLabAutomationId(ctx.params.automationId);
-
-    const path = resolveAgentLabAutomationsPath(workspace.path);
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "agentlab.automations.delete",
-      summary: `Delete automation ${automationId}`,
-      paths: [path],
-    });
-
-    const store = await readAgentLabAutomations(workspace.path);
-    const before = store.items.length;
-    store.items = store.items.filter((item) => item.id !== automationId);
-    if (store.items.length === before) {
-      throw new ApiError(404, "automation_not_found", "Automation not found");
-    }
-    await writeAgentLabAutomations(workspace.path, store);
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "agentlab.automations.delete",
-      target: path,
-      summary: `Deleted automation ${automationId}`,
-      timestamp: Date.now(),
-    });
-    return jsonResponse({ ok: true });
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/agentlab/automations/:automationId/run", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const automationId = validateAgentLabAutomationId(ctx.params.automationId);
-
-    const store = await readAgentLabAutomations(workspace.path);
-    const automation = store.items.find((item) => item.id === automationId);
-    if (!automation) {
-      throw new ApiError(404, "automation_not_found", "Automation not found");
-    }
-
-    const now = Date.now();
-    const created = await fetchOpencodeJson(workspace, "/session", {
-      method: "POST",
-      body: { title: `Automation: ${automation.name}` },
-    });
-    const sessionId = typeof created?.id === "string" ? created.id : String(created?.id ?? "");
-    if (!sessionId.trim()) {
-      throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
-    }
-
-    await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
-      method: "POST",
-      body: {
-        parts: [{ type: "text", text: automation.prompt }],
-      },
-    });
-
-    automation.lastRunAt = now;
-    automation.lastRunSessionId = sessionId;
-    automation.updatedAt = now;
-    if (!config.readOnly) {
-      await writeAgentLabAutomations(workspace.path, store);
-    }
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "agentlab.automations.run",
-      target: resolveAgentLabAutomationsPath(workspace.path),
-      summary: `Ran automation ${automation.name}`,
-      timestamp: now,
-    });
-
-    return jsonResponse({ ok: true, automationId, sessionId, ranAt: now });
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/agentlab/automations/logs", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const logsDir = resolveAgentLabLogsDir(workspace.path);
-    if (!(await exists(logsDir))) {
-      return jsonResponse({ items: [] });
-    }
-    const entries = await readdir(logsDir, { withFileTypes: true });
-    const items: Array<{ id: string; path: string; size: number; updatedAt: number }> = [];
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.endsWith(".log")) continue;
-      const id = entry.name.slice(0, -4);
-      const abs = join(logsDir, entry.name);
-      try {
-        const info = await stat(abs);
-        items.push({ id, path: entry.name, size: info.size, updatedAt: info.mtimeMs });
-      } catch {
-        // ignore
-      }
-    }
-    items.sort((a, b) => b.updatedAt - a.updatedAt);
-    return jsonResponse({ items });
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/agentlab/automations/logs/:automationId", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const automationId = validateAgentLabAutomationId(ctx.params.automationId);
-    const logsDir = resolveAgentLabLogsDir(workspace.path);
-    const abs = join(logsDir, `${automationId}.log`);
-    if (!(await exists(abs))) {
-      throw new ApiError(404, "log_not_found", "Log not found");
-    }
-    const content = await readFile(abs, "utf8");
-    return jsonResponse({ id: automationId, content });
-  });
-
   addRoute(routes, "GET", "/workspace/:id/scheduler/jobs", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const items = await listScheduledJobs(workspace.path);
@@ -3902,11 +3590,16 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
+    const portableFiles = planPortableFiles(workspace.path, body.files);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "config.import",
       summary: "Import workspace config",
-      paths: [opencodeConfigPath(workspace.path), openworkConfigPath(workspace.path)],
+      paths: [
+        opencodeConfigPath(workspace.path),
+        openworkConfigPath(workspace.path),
+        ...portableFiles.map((file) => file.absolutePath),
+      ],
     });
     await importWorkspace(workspace, body);
     await recordAudit(workspace.path, {
@@ -3920,6 +3613,47 @@ function createRoutes(
     });
     emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
     return jsonResponse({ ok: true });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/blueprint/sessions/materialize", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const result = await materializeBlueprintSessions(config, workspace);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "blueprint.sessions.materialize",
+      target: "workspace",
+      summary: result.created.length
+        ? `Materialized ${result.created.length} template starter session${result.created.length === 1 ? "" : "s"}`
+        : "Checked template starter sessions",
+      timestamp: Date.now(),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/share/bundles/publish", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const body = await readJsonBody(ctx.request);
+    const result = await publishSharedBundle({
+      payload: body.payload,
+      bundleType: String(body.bundleType ?? "").trim(),
+      name: typeof body.name === "string" ? body.name : undefined,
+      baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
+      timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/share/bundles/fetch", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const body = await readJsonBody(ctx.request);
+    const bundle = await fetchSharedBundle(body.bundleUrl, {
+      timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
+    });
+    return jsonResponse(bundle);
   });
 
   addRoute(routes, "GET", "/approvals", "host", async (ctx) => {
@@ -5022,13 +4756,6 @@ function buildOpencodeReloadUrl(baseUrl: string, directory?: string | null): str
   }
 }
 
-function buildOpencodeAuthHeader(workspace: WorkspaceInfo): string | null {
-  const username = workspace.opencodeUsername?.trim() ?? "";
-  const password = workspace.opencodePassword?.trim() ?? "";
-  if (!username || !password) return null;
-  return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
-}
-
 function parseOpencodeErrorBody(input: string): unknown {
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -5039,8 +4766,9 @@ function parseOpencodeErrorBody(input: string): unknown {
   }
 }
 
-async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
-  const baseUrl = workspace.baseUrl?.trim() ?? "";
+async function reloadOpencodeEngine(config: ServerConfig, workspace: WorkspaceInfo): Promise<void> {
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
@@ -5048,7 +4776,7 @@ async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
   const directory = resolveOpencodeDirectory(workspace);
   const targetUrl = buildOpencodeReloadUrl(baseUrl, directory);
   const headers: Record<string, string> = {};
-  const auth = buildOpencodeAuthHeader(workspace);
+  const auth = connection.authHeader ?? null;
   if (auth) headers.Authorization = auth;
 
   const response = await fetch(targetUrl, { method: "POST", headers });
@@ -5082,10 +4810,11 @@ async function requireApproval(
 }
 
 async function exportWorkspace(workspace: WorkspaceInfo) {
-  const opencode = await readOpencodeConfig(workspace.path);
-  const openwork = await readOpenworkConfig(workspace.path);
+  const opencode = sanitizePortableOpencodeConfig(await readOpencodeConfig(workspace.path));
+  const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfig(workspace.path));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
+  const files = await listPortableFiles(workspace.path);
   const skillContents = await Promise.all(
     skills.map(async (skill) => ({
       name: skill.name,
@@ -5108,6 +4837,7 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
     openwork,
     skills: skillContents,
     commands: commandContents,
+    ...(files.length ? { files } : {}),
   };
 }
 
@@ -5117,20 +4847,23 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
   const openwork = payload.openwork as Record<string, unknown> | undefined;
   const skills = (payload.skills as { name: string; content: string; description?: string }[] | undefined) ?? [];
   const commands = (payload.commands as { name: string; content?: string; description?: string; template?: string; agent?: string; model?: string | null; subtask?: boolean }[] | undefined) ?? [];
+  const files = payload.files;
 
   if (opencode) {
+    const sanitizedOpencode = sanitizePortableOpencodeConfig(opencode);
     if (modes.opencode === "replace") {
-      await writeJsoncFile(opencodeConfigPath(workspace.path), opencode);
+      await writeJsoncFile(opencodeConfigPath(workspace.path), sanitizedOpencode);
     } else {
-      await updateJsoncTopLevel(opencodeConfigPath(workspace.path), opencode);
+      await updateJsoncTopLevel(opencodeConfigPath(workspace.path), sanitizedOpencode);
     }
   }
 
   if (openwork) {
+    const sanitizedOpenwork = sanitizeOpenworkTemplateConfig(openwork);
     if (modes.openwork === "replace") {
-      await writeOpenworkConfig(workspace.path, openwork, false);
+      await writeOpenworkConfig(workspace.path, sanitizedOpenwork, false);
     } else {
-      await writeOpenworkConfig(workspace.path, openwork, true);
+      await writeOpenworkConfig(workspace.path, sanitizedOpenwork, true);
     }
   }
 
@@ -5178,4 +4911,63 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
       }
     }
   }
+
+  if (Array.isArray(files) && files.length > 0) {
+    await writePortableFiles(workspace.path, files, { replace: modes.files === "replace" });
+  }
+}
+
+async function materializeBlueprintSessions(config: ServerConfig, workspace: WorkspaceInfo): Promise<{
+  ok: boolean;
+  created: Array<{ templateId: string; sessionId: string; title: string }>;
+  existing: Array<{ templateId: string; sessionId: string }>;
+  openSessionId: string | null;
+}> {
+  const openwork = await readOpenworkConfig(workspace.path);
+  const templates = normalizeBlueprintSessionTemplates(openwork);
+  if (!templates.length) {
+    return { ok: true, created: [], existing: [], openSessionId: null };
+  }
+
+  const existing = readMaterializedBlueprintSessions(openwork);
+  if (existing.length > 0) {
+    const preferredTemplate = templates.find((template) => template.openOnFirstLoad) ?? templates[0] ?? null;
+    const openSessionId = preferredTemplate
+      ? existing.find((item) => item.templateId === preferredTemplate.id)?.sessionId ?? existing[0]?.sessionId ?? null
+      : existing[0]?.sessionId ?? null;
+    return { ok: true, created: [], existing, openSessionId };
+  }
+
+  const created: Array<{ templateId: string; sessionId: string; title: string }> = [];
+  for (const template of templates) {
+    const result = await fetchOpencodeJson(config, workspace, "/session", {
+      method: "POST",
+      body: template.title ? { title: template.title } : undefined,
+    });
+    const sessionId = typeof result?.id === "string" ? result.id.trim() : "";
+    if (!sessionId) {
+      throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
+    }
+    seedOpencodeSessionMessages({
+      sessionId,
+      workspaceRoot: resolveOpencodeDirectory(workspace) ?? workspace.path,
+      messages: template.messages,
+    });
+    created.push({ templateId: template.id, sessionId, title: template.title });
+  }
+
+  const now = Date.now();
+  const nextOpenwork = applyMaterializedBlueprintSessions(
+    openwork,
+    created.map(({ templateId, sessionId }) => ({ templateId, sessionId })),
+    now,
+  );
+  await writeOpenworkConfig(workspace.path, nextOpenwork, false);
+
+  const preferredTemplate = templates.find((template) => template.openOnFirstLoad) ?? templates[0] ?? null;
+  const openSessionId = preferredTemplate
+    ? created.find((item) => item.templateId === preferredTemplate.id)?.sessionId ?? created[0]?.sessionId ?? null
+    : created[0]?.sessionId ?? null;
+
+  return { ok: true, created, existing: [], openSessionId };
 }

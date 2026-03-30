@@ -14,8 +14,6 @@ import {
   Plus,
 } from "lucide-solid";
 
-import DesktopOnlyBadge from "../desktop-only-badge";
-import { getOpenWorkDeployment } from "../../lib/openwork-deployment";
 import { DEFAULT_SESSION_TITLE, getDisplaySessionTitle } from "../../lib/session-title";
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type {
@@ -31,7 +29,7 @@ import { t } from "../../../i18n";
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
-  activeWorkspaceId: string;
+  selectedWorkspaceId: string;
   developerMode: boolean;
   selectedSessionId: string | null;
   showSessionActions?: boolean;
@@ -39,10 +37,7 @@ type Props = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
-  importingWorkspaceConfig: boolean;
-  onActivateWorkspace: (
-    workspaceId: string,
-  ) => Promise<boolean> | boolean | void;
+  onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameSession?: () => void;
@@ -59,12 +54,10 @@ type Props = {
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
-  onOpenCreateRemoteWorkspace: () => void;
-  onImportWorkspaceConfig: () => void;
 };
 
 const MAX_SESSIONS_PREVIEW = 6;
-const COLLAPSED_SESSIONS_PREVIEW = 1;
+const COLLAPSED_SESSIONS_PREVIEW = MAX_SESSIONS_PREVIEW;
 
 type SessionListItem = WorkspaceSessionGroup["sessions"][number];
 type FlattenedSessionRow = { session: SessionListItem; depth: number };
@@ -192,9 +185,14 @@ const workspaceSwatchColor = (seed: string) => {
 
 export default function WorkspaceSessionList(props: Props) {
   const revealLabel = isWindowsPlatform()
+<<<<<<< HEAD
     ? t("session.reveal_explorer")
     : t("session.reveal_finder");
   const newWorkspaceDesktopOnly = getOpenWorkDeployment() === "web";
+=======
+    ? "Reveal in Explorer"
+    : "Reveal in Finder";
+>>>>>>> upstream/dev
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<
     Set<string>
   >(new Set());
@@ -203,13 +201,11 @@ export default function WorkspaceSessionList(props: Props) {
   const [workspaceMenuId, setWorkspaceMenuId] = createSignal<string | null>(
     null,
   );
-  const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
   const [expandedSessionIds, setExpandedSessionIds] = createSignal<Set<string>>(
     new Set(),
   );
   let workspaceMenuRef: HTMLDivElement | undefined;
-  let addWorkspaceMenuRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
 
   const isWorkspaceExpanded = (workspaceId: string) =>
@@ -241,11 +237,11 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   onMount(() => {
-    expandWorkspace(props.activeWorkspaceId);
+    expandWorkspace(props.selectedWorkspaceId);
   });
 
   createEffect(() => {
-    expandWorkspace(props.activeWorkspaceId);
+    expandWorkspace(props.selectedWorkspaceId);
   });
 
   const previewCount = (workspaceId: string) => {
@@ -307,18 +303,6 @@ export default function WorkspaceSessionList(props: Props) {
       const target = event.target as Node | null;
       if (target && workspaceMenuRef.contains(target)) return;
       setWorkspaceMenuId(null);
-    };
-    window.addEventListener("pointerdown", closeMenu);
-    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
-  });
-
-  createEffect(() => {
-    if (!addWorkspaceMenuOpen()) return;
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (addWorkspaceMenuRef && target && addWorkspaceMenuRef.contains(target))
-        return;
-      setAddWorkspaceMenuOpen(false);
     };
     window.addEventListener("pointerdown", closeMenu);
     onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
@@ -518,7 +502,11 @@ export default function WorkspaceSessionList(props: Props) {
               if (group.status === "error") return taskLoadError().label;
               if (isConnectionActionBusy()) return t("session.status_connecting");
               if (!props.developerMode) return "";
+<<<<<<< HEAD
               if (props.activeWorkspaceId === workspace().id) return t("session.status_active");
+=======
+              if (props.selectedWorkspaceId === workspace().id) return "Selected";
+>>>>>>> upstream/dev
               return workspaceKindLabel(workspace());
             };
             const statusTone = () => {
@@ -537,14 +525,14 @@ export default function WorkspaceSessionList(props: Props) {
                     role="button"
                     tabIndex={0}
                     class={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-[13px] transition-colors ${
-                      props.activeWorkspaceId === workspace().id
+                      props.selectedWorkspaceId === workspace().id
                         ? "bg-gray-2/70 text-gray-12"
                         : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-12"
                     } ${isConnecting() ? "opacity-75" : ""}`}
                     onClick={() => {
                       expandWorkspace(workspace().id);
                       void Promise.resolve(
-                        props.onActivateWorkspace(workspace().id),
+                        props.onSelectWorkspace(workspace().id),
                       );
                     }}
                     onKeyDown={(event) => {
@@ -553,7 +541,7 @@ export default function WorkspaceSessionList(props: Props) {
                       event.preventDefault();
                       expandWorkspace(workspace().id);
                       void Promise.resolve(
-                        props.onActivateWorkspace(workspace().id),
+                        props.onSelectWorkspace(workspace().id),
                       );
                     }}
                    >
@@ -732,29 +720,52 @@ export default function WorkspaceSessionList(props: Props) {
 
                 <div class="mt-3 px-1 pb-1">
                   <div class="relative flex flex-col gap-1 pl-2.5 before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[2px] before:bg-gray-3 before:content-['']">
-                  <Show
-                    when={isWorkspaceExpanded(workspace().id)}
-                    fallback={
-                      <Show when={group.sessions.length > 0}>
-                        <For
-                          each={previewSessions(
-                            workspace().id,
-                            group.sessions,
-                            tree,
-                            forcedExpandedSessionIds,
-                          )}
-                        >
-                          {(row) =>
-                            renderSessionRow(
+                   <Show
+                     when={isWorkspaceExpanded(workspace().id)}
+                     fallback={
+                       <Show when={group.sessions.length > 0}>
+                          <For
+                            each={previewSessions(
                               workspace().id,
-                              row,
+                              group.sessions,
                               tree,
                               forcedExpandedSessionIds,
                             )}
-                        </For>
-                      </Show>
-                    }
-                  >
+                          >
+                            {(row) =>
+                              renderSessionRow(
+                                workspace().id,
+                                row,
+                                tree,
+                                forcedExpandedSessionIds,
+                              )}
+                          </For>
+
+                          <Show
+                            when={
+                              getRootSessions(group.sessions).length >
+                              previewCount(workspace().id)
+                            }
+                          >
+                            <button
+                              type="button"
+                              class="w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+                              onClick={() =>
+                                showMoreSessions(
+                                  workspace().id,
+                                  getRootSessions(group.sessions).length,
+                                )
+                              }
+                            >
+                              {showMoreLabel(
+                                workspace().id,
+                                getRootSessions(group.sessions).length,
+                              )}
+                            </button>
+                          </Show>
+                        </Show>
+                      }
+                    >
                     <Show
                       when={
                         group.status === "loading" &&
@@ -857,18 +868,16 @@ export default function WorkspaceSessionList(props: Props) {
         </div>
       </div>
 
-      <div
-        class="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar pt-3"
-        ref={(el) => (addWorkspaceMenuRef = el)}
-      >
+      <div class="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar pt-3">
         <button
           type="button"
           class="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] font-medium text-gray-11 shadow-[var(--dls-card-shadow)] transition-colors hover:bg-gray-2"
-          onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
+          onClick={props.onOpenCreateWorkspace}
         >
           <Plus size={14} />
           {t("session.add_workspace")}
         </button>
+<<<<<<< HEAD
 
         <Show when={addWorkspaceMenuOpen()}>
           <div class="absolute left-0 right-0 bottom-full z-20 mb-2 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]">
@@ -921,6 +930,8 @@ export default function WorkspaceSessionList(props: Props) {
             </button>
           </div>
         </Show>
+=======
+>>>>>>> upstream/dev
       </div>
     </div>
   );
