@@ -1,6 +1,7 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { isTauriRuntime } from "../utils";
-import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./tauri";
+import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
+import { desktopFetch } from "./desktop";
+import { isDesktopRuntime } from "../utils";
+import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./desktop";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -103,6 +104,21 @@ export type OpenworkWorkspaceList = {
   items: OpenworkWorkspaceInfo[];
   workspaces?: WorkspaceInfo[];
   activeId?: string | null;
+};
+
+export type OpenworkSessionMessage = {
+  info: Message;
+  parts: Part[];
+};
+
+export type OpenworkSessionSnapshot = {
+  session: Session;
+  messages: OpenworkSessionMessage[];
+  todos: Todo[];
+  status:
+    | { type: "idle" }
+    | { type: "busy" }
+    | { type: "retry"; attempt: number; message: string; next: number };
 };
 
 export type OpenworkPluginItem = {
@@ -373,6 +389,14 @@ export type OpenworkWorkspaceExport = {
   skills?: Array<{ name: string; description?: string; trigger?: string; content: string }>;
   commands?: Array<{ name: string; description?: string; template?: string }>;
   files?: Array<{ path: string; content: string }>;
+};
+
+export type OpenworkWorkspaceExportSensitiveMode = "auto" | "include" | "exclude";
+
+export type OpenworkWorkspaceExportWarning = {
+  id: string;
+  label: string;
+  detail: string;
 };
 
 export type OpenworkBlueprintSessionsMaterializeResult = {
@@ -682,30 +706,6 @@ export function clearOpenworkServerSettings() {
   }
 }
 
-export function deriveOpenworkServerUrl(
-  opencodeBaseUrl: string,
-  settings?: OpenworkServerSettings,
-) {
-  const override = settings?.urlOverride?.trim();
-  if (override) {
-    return normalizeOpenworkServerUrl(override);
-  }
-
-  const base = opencodeBaseUrl.trim();
-  if (!base) return null;
-  try {
-    const url = new URL(base);
-    const port = settings?.portOverride ?? DEFAULT_OPENWORK_SERVER_PORT;
-    url.port = String(port);
-    url.pathname = "";
-    url.search = "";
-    url.hash = "";
-    return url.origin;
-  } catch {
-    return null;
-  }
-}
-
 export class OpenworkServerError extends Error {
   status: number;
   code: string;
@@ -751,8 +751,22 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
   return headers;
 }
 
-// Use Tauri's fetch when running in the desktop app to avoid CORS issues
-const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
+// Use Tauri's fetch when running in the desktop app to avoid CORS issues.
+// Stream URLs (SSE) bypass the plugin because its `fetch_read_body` IPC call
+// blocks until the body closes — that freezes the webview for infinite bodies.
+const OPENWORK_STREAM_URL_RE = /\/events(\b|\?)|\/event-stream\b|\/stream\b/;
+
+function isStreamUrl(url: string): boolean {
+  return OPENWORK_STREAM_URL_RE.test(url);
+}
+
+const resolveFetch = (url?: string) => {
+  if (!isDesktopRuntime()) return globalThis.fetch;
+  if (url && isStreamUrl(url)) {
+    return typeof window !== "undefined" ? window.fetch.bind(window) : globalThis.fetch;
+  }
+  return desktopFetch;
+};
 
 const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
 
@@ -803,7 +817,7 @@ async function requestJson<T>(
   options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
+  const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -833,7 +847,7 @@ async function requestJsonRaw<T>(
   options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<RawJsonResponse<T>> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
+  const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -862,7 +876,7 @@ async function requestMultipartRaw(
   options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; status: number; text: string }>{
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
+  const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -883,7 +897,7 @@ async function requestBinary(
   options: { method?: string; token?: string; hostToken?: string; timeoutMs?: number } = {},
 ): Promise<{ data: ArrayBuffer; contentType: string | null; filename: string | null }>{
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
+  const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -928,6 +942,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     activateWorkspace: 10_000,
     deleteWorkspace: 10_000,
     deleteSession: 12_000,
+    sessionRead: 12_000,
     status: 6_000,
     config: 10_000,
     opencodeRouter: 10_000,
@@ -948,14 +963,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     opencodeRouterHealth: () =>
       requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(baseUrl, "/opencode-router/health", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
-    getOpenCodeRouterHealth: (workspaceId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(
+    getOpenCodeRouterHealth: (workspaceId: string) =>
+      requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/health${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/health`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
-      );
-    },
+      ),
     opencodeRouterBindings: (filters?: { channel?: string; identityId?: string }) => {
       const search = new URLSearchParams();
       if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());
@@ -1003,12 +1016,63 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
       ),
-    exportWorkspace: (workspaceId: string) =>
-      requestJson<OpenworkWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {
+    listSessions: (
+      workspaceId: string,
+      options?: { roots?: boolean; start?: number; search?: string; limit?: number },
+    ) => {
+      const query = new URLSearchParams();
+      if (typeof options?.roots === "boolean") query.set("roots", String(options.roots));
+      if (typeof options?.start === "number") query.set("start", String(options.start));
+      if (options?.search?.trim()) query.set("search", options.search.trim());
+      if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return requestJson<{ items: Session[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions${suffix}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      );
+    },
+    getSession: (workspaceId: string, sessionId: string) =>
+      requestJson<{ item: Session }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      ),
+    getSessionMessages: (workspaceId: string, sessionId: string, options?: { limit?: number }) => {
+      const query = new URLSearchParams();
+      if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return requestJson<{ items: OpenworkSessionMessage[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/messages${suffix}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      );
+    },
+    getSessionSnapshot: (workspaceId: string, sessionId: string, options?: { limit?: number }) => {
+      const query = new URLSearchParams();
+      if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return requestJson<{ item: OpenworkSessionSnapshot }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/snapshot${suffix}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      );
+    },
+    exportWorkspace: (
+      workspaceId: string,
+      options?: { sensitiveMode?: OpenworkWorkspaceExportSensitiveMode },
+    ) => {
+      const query = new URLSearchParams();
+      if (options?.sensitiveMode) {
+        query.set("sensitive", options.sensitiveMode);
+      }
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return requestJson<OpenworkWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export${suffix}`, {
         token,
         hostToken,
         timeoutMs: timeouts.workspaceExport,
-      }),
+      });
+    },
     importWorkspace: (workspaceId: string, payload: Record<string, unknown>) =>
       requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/import`, {
         token,
@@ -1028,7 +1092,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.workspaceImport,
         },
       ),
-    publishBundle: (payload: unknown, bundleType: "skill" | "workspace-profile" | "skills-set", options?: { name?: string; baseUrl?: string | null; timeoutMs?: number }) =>
+    publishBundle: (payload: unknown, bundleType: "skill" | "workspace-profile" | "skills-set", options?: { name?: string; timeoutMs?: number }) =>
       requestJson<{ url: string }>(baseUrl, "/share/bundles/publish", {
         token,
         hostToken,
@@ -1037,7 +1101,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           payload,
           bundleType,
           name: options?.name,
-          baseUrl: options?.baseUrl ?? undefined,
           timeoutMs: options?.timeoutMs,
         },
         timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
@@ -1062,7 +1125,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     setOpenCodeRouterTelegramToken: (
       workspaceId: string,
       tokenValue: string,
-      healthPort?: number | null,
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramResult>(
         baseUrl,
@@ -1071,7 +1133,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "POST",
-          body: { token: tokenValue, healthPort },
+          body: { token: tokenValue },
           timeoutMs: timeouts.opencodeRouter,
         },
       ),
@@ -1079,7 +1141,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       workspaceId: string,
       botToken: string,
       appToken: string,
-      healthPort?: number | null,
     ) =>
       requestJson<OpenworkOpenCodeRouterSlackResult>(
         baseUrl,
@@ -1088,7 +1149,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "POST",
-          body: { botToken, appToken, healthPort },
+          body: { botToken, appToken },
           timeoutMs: timeouts.opencodeRouter,
         },
       ),
@@ -1098,18 +1159,15 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
       ),
-    getOpenCodeRouterTelegramIdentities: (workspaceId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterTelegramIdentitiesResult>(
+    getOpenCodeRouterTelegramIdentities: (workspaceId: string) =>
+      requestJson<OpenworkOpenCodeRouterTelegramIdentitiesResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
-      );
-    },
+      ),
     upsertOpenCodeRouterTelegramIdentity: (
       workspaceId: string,
       input: { id?: string; token: string; enabled?: boolean; access?: "public" | "private"; pairingCode?: string },
-      options?: { healthPort?: number | null },
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramIdentityUpsertResult>(
         baseUrl,
@@ -1124,30 +1182,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
             ...(input.access ? { access: input.access } : {}),
             ...(input.pairingCode?.trim() ? { pairingCode: input.pairingCode.trim() } : {}),
-            healthPort: options?.healthPort ?? null,
           },
         },
       ),
-    deleteOpenCodeRouterTelegramIdentity: (workspaceId: string, identityId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterTelegramIdentityDeleteResult>(
+    deleteOpenCodeRouterTelegramIdentity: (workspaceId: string, identityId: string) =>
+      requestJson<OpenworkOpenCodeRouterTelegramIdentityDeleteResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram/${encodeURIComponent(identityId)}${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram/${encodeURIComponent(identityId)}`,
         { token, hostToken, method: "DELETE" },
-      );
-    },
-    getOpenCodeRouterSlackIdentities: (workspaceId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterSlackIdentitiesResult>(
+      ),
+    getOpenCodeRouterSlackIdentities: (workspaceId: string) =>
+      requestJson<OpenworkOpenCodeRouterSlackIdentitiesResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack`,
         { token, hostToken },
-      );
-    },
+      ),
     upsertOpenCodeRouterSlackIdentity: (
       workspaceId: string,
       input: { id?: string; botToken: string; appToken: string; enabled?: boolean },
-      options?: { healthPort?: number | null },
     ) =>
       requestJson<OpenworkOpenCodeRouterSlackIdentityUpsertResult>(
         baseUrl,
@@ -1161,26 +1213,22 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             botToken: input.botToken,
             appToken: input.appToken,
             ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
-            healthPort: options?.healthPort ?? null,
           },
         },
       ),
-    deleteOpenCodeRouterSlackIdentity: (workspaceId: string, identityId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterSlackIdentityDeleteResult>(
+    deleteOpenCodeRouterSlackIdentity: (workspaceId: string, identityId: string) =>
+      requestJson<OpenworkOpenCodeRouterSlackIdentityDeleteResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack/${encodeURIComponent(identityId)}${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack/${encodeURIComponent(identityId)}`,
         { token, hostToken, method: "DELETE" },
-      );
-    },
+      ),
     getOpenCodeRouterBindings: (
       workspaceId: string,
-      filters?: { channel?: string; identityId?: string; healthPort?: number | null },
+      filters?: { channel?: string; identityId?: string },
     ) => {
       const search = new URLSearchParams();
       if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());
       if (filters?.identityId?.trim()) search.set("identityId", filters.identityId.trim());
-      if (typeof filters?.healthPort === "number") search.set("healthPort", String(filters.healthPort));
       const suffix = search.toString();
       return requestJson<OpenworkOpenCodeRouterBindingsResult>(
         baseUrl,
@@ -1191,7 +1239,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     setOpenCodeRouterBinding: (
       workspaceId: string,
       input: { channel: string; identityId?: string; peerId: string; directory?: string },
-      options?: { healthPort?: number | null },
     ) =>
       requestJson<OpenworkOpenCodeRouterBindingUpdateResult>(
         baseUrl,
@@ -1205,7 +1252,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             ...(input.identityId?.trim() ? { identityId: input.identityId.trim() } : {}),
             peerId: input.peerId,
             ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
-            healthPort: options?.healthPort ?? null,
           },
         },
       ),
@@ -1219,7 +1265,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         peerId?: string;
         autoBind?: boolean;
       },
-      options?: { healthPort?: number | null },
     ) => {
       const payload = {
         channel: input.channel,
@@ -1228,7 +1273,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
         ...(input.peerId?.trim() ? { peerId: input.peerId.trim() } : {}),
         ...(input.autoBind === true ? { autoBind: true } : {}),
-        healthPort: options?.healthPort ?? null,
       };
 
       const primaryPath = `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/send`;
@@ -1260,7 +1304,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     setOpenCodeRouterTelegramEnabled: (
       workspaceId: string,
       enabled: boolean,
-      options?: { clearToken?: boolean; healthPort?: number | null },
+      options?: { clearToken?: boolean },
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramEnabledResult>(
         baseUrl,
@@ -1269,7 +1313,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "POST",
-          body: { enabled, clearToken: options?.clearToken ?? false, healthPort: options?.healthPort ?? null },
+          body: { enabled, clearToken: options?.clearToken ?? false },
         },
       ),
     patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
@@ -1382,6 +1426,16 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: payload,
       }),
+    deleteSkill: (workspaceId: string, name: string) =>
+      requestJson<{ path: string }>(
+        baseUrl,
+        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}`,
+        {
+          token,
+          hostToken,
+          method: "DELETE",
+        },
+      ),
     listMcp: (workspaceId: string) =>
       requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token, hostToken }),
     addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>

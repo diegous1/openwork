@@ -1,6 +1,9 @@
 import { createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
-import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
-import type { OpenworkServerClient, OpenworkWorkspaceExport } from "../lib/openwork-server";
+import type {
+  OpenworkServerClient,
+  OpenworkWorkspaceExport,
+  OpenworkWorkspaceExportSensitiveMode,
+} from "../lib/openwork-server";
 import type { SkillsSetBundleV1, WorkspaceProfileBundleV1 } from "./types";
 
 export function buildWorkspaceProfileBundle(
@@ -43,13 +46,14 @@ export async function publishWorkspaceProfileBundleFromWorkspace(input: {
   client: OpenworkServerClient;
   workspaceId: string;
   workspaceName: string;
-  baseUrl?: string;
+  sensitiveMode?: Exclude<OpenworkWorkspaceExportSensitiveMode, "auto"> | null;
 }) {
-  const exported = await input.client.exportWorkspace(input.workspaceId);
+  const exported = await input.client.exportWorkspace(input.workspaceId, {
+    sensitiveMode: input.sensitiveMode ?? undefined,
+  });
   const payload = buildWorkspaceProfileBundle(input.workspaceName, exported);
   return input.client.publishBundle(payload, "workspace-profile", {
     name: payload.name,
-    baseUrl: input.baseUrl ?? DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
   });
 }
 
@@ -57,13 +61,13 @@ export async function publishSkillsSetBundleFromWorkspace(input: {
   client: OpenworkServerClient;
   workspaceId: string;
   workspaceName: string;
-  baseUrl?: string;
 }) {
-  const exported = await input.client.exportWorkspace(input.workspaceId);
+  const exported = await input.client.exportWorkspace(input.workspaceId, {
+    sensitiveMode: "exclude",
+  });
   const payload = buildSkillsSetBundle(input.workspaceName, exported);
   return input.client.publishBundle(payload, "skills-set", {
     name: payload.name,
-    baseUrl: input.baseUrl ?? DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
   });
 }
 
@@ -72,8 +76,11 @@ export async function saveWorkspaceProfileBundleToTeam(input: {
   workspaceId: string;
   workspaceName: string;
   requestedName: string;
+  sensitiveMode?: Exclude<OpenworkWorkspaceExportSensitiveMode, "auto"> | null;
 }) {
-  const exported = await input.client.exportWorkspace(input.workspaceId);
+  const exported = await input.client.exportWorkspace(input.workspaceId, {
+    sensitiveMode: input.sensitiveMode ?? undefined,
+  });
   const fallbackName = `${input.workspaceName} template`;
   const name = input.requestedName.trim() || fallbackName;
   const payload = {
@@ -87,7 +94,7 @@ export async function saveWorkspaceProfileBundleToTeam(input: {
     throw new Error("Sign in to OpenWork Cloud in Settings to share with your team.");
   }
 
-  const cloudClient = createDenClient({ baseUrl: settings.baseUrl, token });
+  const cloudClient = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
   let orgId = settings.activeOrgId?.trim() ?? "";
   let orgSlug = settings.activeOrgSlug?.trim() ?? "";
   let orgName = settings.activeOrgName?.trim() ?? "";

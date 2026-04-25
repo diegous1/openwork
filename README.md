@@ -4,7 +4,7 @@
 ## Core Philosophy
 
 - Local-first, cloud-ready: OpenWork runs on your machine in one click. Send a message instantly.
-- Composable: desktop app, WhatsApp/Slack/Telegram connector, or server. Use what fits, no lock-in.
+- Composable: desktop app, Slack/Telegram connector, or server. Use what fits, no lock-in.
 - Ejectable: OpenWork is powered by OpenCode, so everything OpenCode can do works in OpenWork, even without a UI yet.
 - Sharing is caring: start solo on localhost, then explicitly opt into remote sharing when you need it.
 
@@ -12,7 +12,12 @@
   <img src="./app-demo.gif" alt="OpenWork demo" width="800" />
 </p>
 
-OpenWork is designed around the idea that you can easily ship your agentic workflows as a repeatable, productized process.
+OpenWork is designed around the idea that you can easily ship your agentic workflows for your team as a repeatable, productized process.
+
+> [!TIP]
+> **Looking for an [Enterprise Plan](https://openworklabs.com/enterprise)?** [Speak with our Sales Team today](https://cal.com/team/openwork/enterprise)
+>
+> Get enhanced capabilities including feature prioritization, SSO, SLA support, LTS versions, and more.
 
 ## Alternate UIs
 - **OpenWork Orchestrator (CLI host)**: run OpenCode + OpenWork server without the desktop UI.
@@ -22,7 +27,11 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
 
 ## Quick start
 
-Download the correct version in [here](https://openworklabs.com/download), in the latest [releases](https://github.com/different-ai/openwork/releases) or install from source below.
+Download the desktop app from [openworklabs.com/download](https://openworklabs.com/download), grab the latest [GitHub release](https://github.com/different-ai/openwork/releases), or install from source below.
+
+- macOS and Linux downloads are available directly.
+- Windows access is currently handled through the paid support plan on [openworklabs.com/pricing#windows-support](https://openworklabs.com/pricing#windows-support).
+- Hosted OpenWork Cloud workers are launched from the web app after checkout, then connected from the desktop app via `Add a worker` -> `Connect remote`.
 
 ## Why
 
@@ -44,9 +53,9 @@ OpenWork is designed to be:
 - **Execution plan**: render OpenCode todos as a timeline.
 - **Permissions**: surface permission requests and reply (allow once / always / deny).
 - **Templates**: save and re-run common workflows (stored locally).
+- **Debug exports**: copy or export the runtime debug report and developer log stream from Settings -> Debug when you need to file a bug.
 - **Skills manager**:
   - list installed `.opencode/skills` folders
-  - install from OpenPackage (`opkg install ...`)
   - import a local skill folder into `.opencode/skills/<skill-name>`
 
 ## Skill Manager
@@ -144,14 +153,6 @@ Capability permissions are defined in:
 
 - `apps/desktop/src-tauri/capabilities/default.json`
 
-## OpenPackage Notes
-
-If `opkg` is not installed globally, OpenWork falls back to:
-
-```bash
-pnpm dlx opkg install <package>
-```
-
 ## OpenCode Plugins
 
 Plugins are the **native** way to extend OpenCode. OpenWork now manages them from the Skills tab by
@@ -181,6 +182,8 @@ pnpm test:e2e
 ```
 
 ## Troubleshooting
+
+If you need to report a desktop or session bug, open Settings -> Debug and export both the runtime debug report and developer logs before filing an issue.
 
 ### Linux / Wayland (Hyprland)
 
@@ -222,6 +225,12 @@ First contribution checklist:
 - [ ] Add/update tests for behavioral changes.
 - [ ] Include commands run and outcomes in your PR.
 - [ ] Add screenshots/video for user-facing flow changes.
+
+## Supported Languages
+
+Translated READMEs: [`translated_readmes/`](./translated_readmes/README.md), available in English, 简体中文, 繁體中文, 日本語.
+
+The App is available in the following languages: English (`en`), Japanese (`ja`), Simplified Chinese (`zh`), Vietnamese (`vi`), Brazilian Portuguese (`pt-BR`).
 
 ## For Teams & Businesses
 

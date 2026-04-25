@@ -1,7 +1,8 @@
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { createOpencodeClient, type Message, type Part, type Session, type Todo } from "@opencode-ai/sdk/v2/client";
 
-import { isTauriRuntime } from "../utils";
+import { desktopFetch } from "./desktop";
+import { createOpenworkServerClient, OpenworkServerError } from "./openwork-server";
+import { isDesktopRuntime } from "../utils";
 
 type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
@@ -32,6 +33,25 @@ type CommandParameters = {
   variant?: string;
   parts?: unknown[];
   reasoning_effort?: string;
+};
+
+type SessionListParameters = {
+  directory?: string;
+  roots?: boolean;
+  start?: number;
+  search?: string;
+  limit?: number;
+};
+
+type SessionLookupParameters = {
+  sessionID: string;
+  directory?: string;
+};
+
+type SessionMessagesParameters = {
+  sessionID: string;
+  directory?: string;
+  limit?: number;
 };
 
 export type OpencodeAuth = {
@@ -112,6 +132,83 @@ async function postSessionRequest<T>(
   return { error, request, response };
 }
 
+function resolveOpenworkWorkspaceMount(baseUrl: string): { baseUrl: string; workspaceId: string } | null {
+  try {
+    const url = new URL(baseUrl);
+    const match = url.pathname.replace(/\/+$/, "").match(/^(.*\/w\/([^/]+))\/opencode$/);
+    if (!match?.[1] || !match[2]) return null;
+    url.pathname = match[1];
+    url.search = "";
+    return {
+      baseUrl: url.toString().replace(/\/+$/, ""),
+      workspaceId: decodeURIComponent(match[2]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function createSyntheticResult<T>(
+  url: string,
+  method: string,
+  input:
+    | { ok: true; data: T; status?: number }
+    | { ok: false; error: unknown; status?: number },
+): FieldsResult<T> {
+  const request = new Request(url, { method });
+  const response = new Response(input.ok ? JSON.stringify(input.data) : null, {
+    status: input.status ?? (input.ok ? 200 : 500),
+    headers: { "Content-Type": "application/json" },
+  });
+  if (input.ok) {
+    return { data: input.data, request, response };
+  }
+  return { error: input.error, request, response };
+}
+
+async function wrapOpenworkRead<T>(
+  url: string,
+  read: () => Promise<T>,
+  options?: { throwOnError?: boolean },
+): Promise<FieldsResult<T>> {
+  try {
+    return createSyntheticResult(url, "GET", { ok: true, data: await read() });
+  } catch (error) {
+    if (options?.throwOnError) throw error;
+    return createSyntheticResult(url, "GET", {
+      ok: false,
+      error,
+      status: error instanceof OpenworkServerError ? error.status : 500,
+    });
+  }
+}
+
+function shouldFallbackToLegacySessionRead(error: unknown): boolean {
+  if (!(error instanceof OpenworkServerError)) return false;
+  return error.status === 404 || error.status === 405 || error.status === 501;
+}
+
+async function wrapOpenworkReadWithFallback<T>(
+  url: string,
+  read: () => Promise<T>,
+  fallback: () => Promise<FieldsResult<T>>,
+  options?: { throwOnError?: boolean },
+): Promise<FieldsResult<T>> {
+  try {
+    return createSyntheticResult(url, "GET", { ok: true, data: await read() });
+  } catch (error) {
+    if (!shouldFallbackToLegacySessionRead(error)) {
+      if (options?.throwOnError) throw error;
+      return createSyntheticResult(url, "GET", {
+        ok: false,
+        error,
+        status: error instanceof OpenworkServerError ? error.status : 500,
+      });
+    }
+    return fallback();
+  }
+}
+
 async function fetchWithTimeout(
   fetchImpl: typeof globalThis.fetch,
   input: RequestInfo | URL,
@@ -169,7 +266,33 @@ const resolveAuthHeader = (auth?: OpencodeAuth) => {
   return encoded ? `Basic ${encoded}` : null;
 };
 
-const createTauriFetch = (auth?: OpencodeAuth) => {
+/**
+ * URLs whose response body we must stream chunk-by-chunk (SSE, long-running
+ * message streams, event subscriptions). The Tauri HTTP plugin's
+ * `fetch_read_body` IPC call blocks until the entire body is delivered, so
+ * pointing it at an infinite stream freezes the webview's main thread for
+ * minutes. For these endpoints we always use the webview's native fetch —
+ * CORS is already wide open on the openwork/opencode stack, so there's no
+ * reason to route them through the plugin.
+ */
+const STREAM_URL_RE = /\/(event|stream)(\b|\/|$|\?)/;
+
+function requestIsStreaming(input: RequestInfo | URL, init?: RequestInit): boolean {
+  const url = getRequestUrl(input);
+  if (STREAM_URL_RE.test(url)) return true;
+  const accept =
+    input instanceof Request
+      ? input.headers.get("accept") ?? input.headers.get("Accept")
+      : new Headers(init?.headers).get("accept") ?? new Headers(init?.headers).get("Accept");
+  return typeof accept === "string" && accept.toLowerCase().includes("text/event-stream");
+}
+
+function nativeFetchRef(): typeof globalThis.fetch {
+  if (typeof window !== "undefined" && typeof window.fetch === "function") return window.fetch.bind(window);
+  return globalThis.fetch as typeof globalThis.fetch;
+}
+
+const createDesktopFetch = (auth?: OpencodeAuth) => {
   const authHeader = resolveAuthHeader(auth);
   const addAuth = (headers: Headers) => {
     if (!authHeader || headers.has("Authorization")) return;
@@ -177,28 +300,33 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
   };
 
   return (input: RequestInfo | URL, init?: RequestInit) => {
+    // Streams must go through the webview's native fetch to avoid the
+    // Tauri HTTP plugin's `fetch_read_body` hang on never-closing bodies.
+    const shouldStream = requestIsStreaming(input, init);
+    const underlyingFetch = shouldStream
+      ? nativeFetchRef()
+      : desktopFetch;
+    // Streams should never be timed out at the transport layer; the caller
+    // aborts via AbortSignal when the subscription unmounts.
+    const timeoutMs = shouldStream ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
+
     if (input instanceof Request) {
       const headers = new Headers(input.headers);
       addAuth(headers);
       const request = new Request(input, { headers });
-      return fetchWithTimeout(
-        tauriFetch as unknown as typeof globalThis.fetch,
-        request,
-        undefined,
-        DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
-      );
+      return fetchWithTimeout(underlyingFetch, request, undefined, timeoutMs);
     }
 
     const headers = new Headers(init?.headers);
     addAuth(headers);
     return fetchWithTimeout(
-      tauriFetch as unknown as typeof globalThis.fetch,
+      underlyingFetch,
       input,
       {
         ...init,
         headers,
       },
-      DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
+      timeoutMs,
     );
   };
 };
@@ -218,15 +346,15 @@ export function unwrap<T>(result: FieldsResult<T>): NonNullable<T> {
 
 export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth) {
   const headers: Record<string, string> = {};
-  if (!isTauriRuntime()) {
+  if (!isDesktopRuntime()) {
     const authHeader = resolveAuthHeader(auth);
     if (authHeader) {
       headers.Authorization = authHeader;
     }
   }
 
-  const fetchImpl = isTauriRuntime()
-    ? createTauriFetch(auth)
+  const fetchImpl = isDesktopRuntime()
+    ? createDesktopFetch(auth)
     : (input: RequestInfo | URL, init?: RequestInit) =>
         fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
   const client = createOpencodeClient({
@@ -237,9 +365,86 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   });
 
   const session = client.session as typeof client.session;
+  const openworkMount = auth?.mode === "openwork" ? resolveOpenworkWorkspaceMount(baseUrl) : null;
+  const openworkSessionClient =
+    openworkMount && auth?.token
+      ? createOpenworkServerClient({ baseUrl: openworkMount.baseUrl, token: auth.token })
+      : null;
+  // TODO(2026-04-12): remove the old-server compatibility path here once all
+  // OpenWork servers expose the workspace-scoped session read APIs.
   const sessionOverrides = session as any as {
+    list: (parameters?: SessionListParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session[]>>;
+    get: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session>>;
+    messages: (parameters: SessionMessagesParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Array<{ info: Message; parts: Part[] }>>>;
+    todo: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Todo[]>>;
     promptAsync: (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
     command: (parameters: CommandParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
+  };
+
+  const listOriginal = sessionOverrides.list.bind(session);
+  sessionOverrides.list = (parameters?: SessionListParameters, options?: { throwOnError?: boolean }) => {
+    if (!openworkMount || !openworkSessionClient) {
+      return listOriginal(parameters, options);
+    }
+    const query = new URLSearchParams();
+    if (typeof parameters?.roots === "boolean") query.set("roots", String(parameters.roots));
+    if (typeof parameters?.start === "number") query.set("start", String(parameters.start));
+    if (parameters?.search?.trim()) query.set("search", parameters.search.trim());
+    if (typeof parameters?.limit === "number") query.set("limit", String(parameters.limit));
+    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions${query.size ? `?${query.toString()}` : ""}`;
+    return wrapOpenworkReadWithFallback(
+      url,
+      async () => (await openworkSessionClient.listSessions(openworkMount.workspaceId, parameters)).items,
+      () => listOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const getOriginal = sessionOverrides.get.bind(session);
+  sessionOverrides.get = (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => {
+    if (!openworkMount || !openworkSessionClient) {
+      return getOriginal(parameters, options);
+    }
+    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}`;
+    return wrapOpenworkReadWithFallback(
+      url,
+      async () => (await openworkSessionClient.getSession(openworkMount.workspaceId, parameters.sessionID)).item,
+      () => getOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const messagesOriginal = sessionOverrides.messages.bind(session);
+  sessionOverrides.messages = (parameters: SessionMessagesParameters, options?: { throwOnError?: boolean }) => {
+    if (!openworkMount || !openworkSessionClient) {
+      return messagesOriginal(parameters, options);
+    }
+    const query = new URLSearchParams();
+    if (typeof parameters.limit === "number") query.set("limit", String(parameters.limit));
+    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/messages${query.size ? `?${query.toString()}` : ""}`;
+    return wrapOpenworkReadWithFallback(
+      url,
+      async () =>
+        (await openworkSessionClient.getSessionMessages(openworkMount.workspaceId, parameters.sessionID, {
+          limit: parameters.limit,
+        })).items,
+      () => messagesOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const todoOriginal = sessionOverrides.todo.bind(session);
+  sessionOverrides.todo = (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => {
+    if (!openworkMount || !openworkSessionClient) {
+      return todoOriginal(parameters, options);
+    }
+    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/snapshot`;
+    return wrapOpenworkReadWithFallback(
+      url,
+      async () => (await openworkSessionClient.getSessionSnapshot(openworkMount.workspaceId, parameters.sessionID)).item.todos,
+      () => todoOriginal(parameters, options),
+      options,
+    );
   };
 
   const promptAsyncOriginal = sessionOverrides.promptAsync.bind(session);

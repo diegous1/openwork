@@ -1,11 +1,11 @@
 mod bun_env;
 mod commands;
 mod config;
+mod desktop_bootstrap;
 mod engine;
 mod fs;
 mod opencode_router;
 mod openwork_server;
-mod opkg;
 mod orchestrator;
 mod paths;
 mod platform;
@@ -20,9 +20,11 @@ use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
 };
 use commands::config::{read_opencode_config, write_opencode_config};
+use commands::desktop_bootstrap::{get_desktop_bootstrap_config, set_desktop_bootstrap_config};
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
+use commands::migration::{migrate_to_electron, write_migration_snapshot};
 use commands::misc::{
     app_build_info, nuke_openwork_and_opencode_config_and_exit, opencode_mcp_auth,
     reset_opencode_cache, reset_openwork_state,
@@ -32,7 +34,6 @@ use commands::opencode_router::{
     opencodeRouter_stop,
 };
 use commands::openwork_server::{openwork_server_info, openwork_server_restart};
-use commands::opkg::{import_skill, opkg_install};
 use commands::orchestrator::{
     orchestrator_instance_dispose, orchestrator_start_detached, orchestrator_status,
     orchestrator_workspace_activate, sandbox_cleanup_openwork_containers, sandbox_debug_probe,
@@ -40,15 +41,16 @@ use commands::orchestrator::{
 };
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::skills::{
-    install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
+    import_skill, install_skill_template, list_local_skills, read_local_skill, uninstall_skill,
+    write_local_skill,
 };
 use commands::updater::updater_environment;
 use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_create, workspace_create_remote,
     workspace_export_config, workspace_forget, workspace_import_config, workspace_openwork_read,
-    workspace_openwork_write, workspace_set_active, workspace_set_runtime_active,
-    workspace_set_selected, workspace_update_display_name, workspace_update_remote,
+    workspace_openwork_write, workspace_set_active, workspace_set_runtime_active, workspace_set_selected,
+    workspace_update_display_name, workspace_update_remote,
 };
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
@@ -112,12 +114,6 @@ fn show_main_window(app_handle: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
-    }
-}
-
-fn hide_main_window(app_handle: &AppHandle) {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        let _ = window.hide();
     }
 }
 
@@ -202,7 +198,6 @@ pub fn run() {
             opencode_command_delete,
             workspace_openwork_read,
             workspace_openwork_write,
-            opkg_install,
             import_skill,
             install_skill_template,
             list_local_skills,
@@ -211,7 +206,11 @@ pub fn run() {
             write_local_skill,
             read_opencode_config,
             write_opencode_config,
+            get_desktop_bootstrap_config,
+            set_desktop_bootstrap_config,
             updater_environment,
+            migrate_to_electron,
+            write_migration_snapshot,
             app_build_info,
             nuke_openwork_and_opencode_config_and_exit,
             reset_openwork_state,
@@ -229,14 +228,16 @@ pub fn run() {
     // orchestrator/opencode/openwork-server processes and stale ports.
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_managed_services(&app_handle),
+        // On macOS the default behavior is to keep the process alive after the
+        // last window closes. We want parity with Windows/Linux: closing the
+        // main window quits the app.
         #[cfg(target_os = "macos")]
         RunEvent::WindowEvent {
             label,
-            event: WindowEvent::CloseRequested { api, .. },
+            event: WindowEvent::CloseRequested { .. },
             ..
         } if label == "main" => {
-            api.prevent_close();
-            hide_main_window(&app_handle);
+            app_handle.exit(0);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Opened { urls } => {
@@ -247,14 +248,11 @@ pub fn run() {
             show_main_window(&app_handle);
             emit_native_deep_links(&app_handle, urls);
         }
+        // Always raise/refocus the main window on dock-icon clicks, even if
+        // it's already visible but behind other apps or on another Space.
         #[cfg(target_os = "macos")]
-        RunEvent::Reopen {
-            has_visible_windows,
-            ..
-        } => {
-            if !has_visible_windows {
-                show_main_window(&app_handle);
-            }
+        RunEvent::Reopen { .. } => {
+            show_main_window(&app_handle);
         }
         _ => {}
     });

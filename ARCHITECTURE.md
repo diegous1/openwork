@@ -85,6 +85,28 @@ Tauri or other native shell behavior remains the fallback or shell boundary for:
 
 If an agent needs one of the server-owned behaviors above and only a Tauri path exists, treat that as an architecture gap to close rather than a parallel capability surface to preserve.
 
+## Release channels
+
+OpenWork desktop ships through two release channels:
+
+- **Stable** (default, all platforms): versioned builds produced by the `Release App` workflow. Each tag `vX.Y.Z` publishes signed, notarized bundles plus a `latest.json` updater manifest at `https://github.com/different-ai/openwork/releases/latest/download/latest.json`.
+- **Alpha** (macOS arm64 only, rolling): every merge to `dev` publishes a signed, notarized build to the rolling GitHub release tagged `alpha-macos-latest`. The alpha updater manifest lives at a stable URL: `https://github.com/different-ai/openwork/releases/download/alpha-macos-latest/latest.json`.
+
+Guidelines:
+
+- The alpha channel is an opt-in preference (`LocalPreferences.releaseChannel`). The toggle is rendered only when `isTauriRuntime()` and `isMacPlatform()` both resolve true; other platforms silently fall back to stable even if the stored preference says `"alpha"`.
+- Alpha builds advertise the next patch version plus an `-alpha.<runNumber>+<sha>` prerelease suffix. That keeps semver ordering `stable < alpha.1 < alpha.2 < next stable` so alpha users migrate forward cleanly when the next stable ships.
+- Alpha and stable share the same Tauri updater signing keypair so an installed stable can upgrade into alpha and vice versa without re-installing manually.
+- Apple signing and notarization are required on both channels; the `MACOS_NOTARIZE` repo variable gates the signed path in `alpha-macos-aarch64.yml`.
+- The alpha workflow is the source of truth for the alpha channel's CI contract. Treat `.github/workflows/alpha-macos-aarch64.yml`, `apps/app/src/app/lib/release-channels.ts`, and this document as one coupled unit.
+
+Code references:
+
+- Workflow: `.github/workflows/alpha-macos-aarch64.yml`
+- Endpoint resolution: `apps/app/src/app/lib/release-channels.ts`
+- Preference plumbing: `apps/app/src/react-app/kernel/local-provider.tsx`, `apps/app/src/react-app/domains/settings/pages/updates-view.tsx`
+- Stable workflow (reference): `.github/workflows/release-macos-aarch64.yml`
+
 ## Reload-required flow
 
 OpenWork uses a single reload-required flow for changes that only take effect when OpenCode restarts.
@@ -164,7 +186,7 @@ These are all opencode primitives you can read the docs to find out exactly how 
 - `/apps/share/`: share-link publisher service for OpenWork bundle imports.
 - `/ee/apps/landing/`: OpenWork landing page surfaces.
 - `/ee/apps/den-web/`: Den web UI for sign-in, worker creation, and future user-management flows.
-- `/ee/apps/den-controller/`: Den controller API that provisions/spins up worker runtimes.
+- `/ee/apps/den-api/`: Den control plane API (formerly `/ee/apps/den-controller/`) that provisions/spins up worker runtimes.
 - `/ee/apps/den-worker-proxy/`: proxy layer that keeps Daytona API keys server-side, refreshes signed worker preview URLs, and forwards worker traffic so users do not manage provider keys directly.
 - `/ee/apps/den-worker-runtime/`: worker runtime packaging (including Docker/runtime artifacts) deployed to Daytona sandboxes.
 
@@ -200,6 +222,7 @@ This model keeps the user experience consistent across self-hosted and hosted pa
 
 - `/apps/app/` runs as the product UI; on desktop it is hosted inside `/apps/desktop/` (Tauri webview).
 - `/apps/desktop/` exposes native commands (`engine_*`, `orchestrator_*`, `openwork_server_*`, `opencodeRouter_*`) to start/stop local services and report status to the UI.
+- `/apps/desktop/` is also the source of truth for desktop bootstrap config that must survive updates, including Den server targeting and forced-sign-in startup behavior. The shell reads a predictable external `desktop-bootstrap.json` from the host config directory (or `OPENWORK_DESKTOP_BOOTSTRAP_PATH` when explicitly overridden). Default builds consume that file when present; custom builds seed or overwrite it when their bundled bootstrap differs from the standard default.
 - Runtime selection in desktop:
   - `openwork-orchestrator` (default): Tauri launches `openwork daemon run` and uses it for workspace activation plus OpenCode lifecycle.
   - `direct`: Tauri starts OpenCode directly.
@@ -229,7 +252,9 @@ This model keeps the user experience consistent across self-hosted and hosted pa
 ### Mode B composition (Web/Cloud services)
 
 - `/ee/apps/den-web/` is the hosted web control surface (sign-in, worker create, upcoming user management).
-- `/ee/apps/den-controller/` is the cloud control plane API (auth/session + worker CRUD + provisioning orchestration).
+- `/ee/apps/den-api/` (formerly `/ee/apps/den-controller/`) is the cloud control plane API (auth/session + worker CRUD + provisioning orchestration).
+- Desktop org runtime config is fetched from Den after sign-in and is treated as server-owned runtime policy. It is stored per organization in Den (`organization.desktop_app_restrictions`) as sparse negative restriction flags (for example `blockZenModel`) and managed from the cloud org settings UI, while install/bootstrap config remains shell-owned in the external bootstrap file and only contains base URL, optional API base URL, and the `forceSignin` startup flag.
+- Daytona-backed workers mount a single shared provider volume and isolate each worker's persistent data by subpaths (`workers/<workerId>/workspace` and `workers/<workerId>/data`) rather than creating dedicated provider volumes per worker.
 - `/ee/apps/den-worker-runtime/` defines the runtime packaging and boot path used inside cloud workers (including Docker/snapshot artifacts and `openwork serve` startup assumptions).
 - `/ee/apps/den-worker-proxy/` fronts Daytona worker preview URLs, refreshes signed links with provider credentials, and proxies traffic to the worker runtime.
 - The OpenWork app (desktop or mobile client) connects to worker OpenWork server surfaces via URL + token (`/w/ws_*` when available).
@@ -238,7 +263,7 @@ This model keeps the user experience consistent across self-hosted and hosted pa
 /ee/apps/den-web
     |
     v
-/ee/apps/den-controller
+/ee/apps/den-api (formerly /ee/apps/den-controller)
     |
     +--> Daytona/Render provisioning
     |        |
@@ -575,9 +600,9 @@ OpenWork's settings pages use:
 
 OpenWork exposes two extension surfaces:
 
-1. **Skills (OpenPackage)**
+1. **Skills**
    - Installed into `.opencode/skills/*`.
-   - OpenWork can run `opkg install` to pull packages from the registry or GitHub.
+   - Skills can be imported from local directories or installed from curated lists.
 
 2. **Plugins (OpenCode)**
    - Plugins are configured via `opencode.json` in the workspace.
@@ -591,14 +616,13 @@ OpenWork exposes two extension surfaces:
 - Use after skills/plugins/MCP/config edits; reloads can interrupt active sessions.
 - Reload requests follow OpenWork server approval rules.
 
-### OpenPackage Registry (Current + Future)
+### Skill Registry (Current + Future)
 
 - Today, OpenWork only supports **curated lists + manual sources**.
-- Publishing to the official registry currently requires authentication (`opkg push` + `opkg configure`).
 - Future goals:
   - in-app registry search
   - curated list sync (e.g. Awesome Claude Skills)
-  - frictionless publishing without signup (pending registry changes)
+  - frictionless publishing without signup
 
 ## Projects + Path
 

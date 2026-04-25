@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
+import { readFile, writeFile, rm, readdir, rename, stat, appendFile, mkdir } from "node:fs/promises";
 import { createHash, randomInt } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -36,6 +36,12 @@ import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection 
 import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
 import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
+import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot, buildSessionStatuses, buildSessionTodos } from "./session-read-model.js";
+import {
+  collectWorkspaceExportWarnings,
+  stripSensitiveWorkspaceExportData,
+  type WorkspaceExportSensitiveMode,
+} from "./workspace-export-safety.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -464,7 +470,14 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
-async function fetchOpencodeJson(config: ServerConfig, workspace: WorkspaceInfo, path: string, init: { method: string; body?: unknown }) {
+type OpencodeQueryValue = string | number | boolean | null | undefined;
+
+async function fetchOpencodeJson(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  path: string,
+  init: { method: string; body?: unknown; query?: URLSearchParams | Record<string, OpencodeQueryValue> },
+) {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) {
@@ -473,12 +486,30 @@ async function fetchOpencodeJson(config: ServerConfig, workspace: WorkspaceInfo,
 
   const url = new URL(baseUrl);
   url.pathname = path.startsWith("/") ? path : `/${path}`;
-  url.search = "";
+  const directory = resolveOpencodeDirectory(workspace);
+  if (init.query instanceof URLSearchParams) {
+    const params = new URLSearchParams(init.query);
+    if (directory && !params.has("directory")) {
+      params.set("directory", directory);
+    }
+    url.search = params.toString();
+  } else if (init.query) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(init.query)) {
+      if (value === undefined || value === null) continue;
+      params.set(key, String(value));
+    }
+    if (directory && !params.has("directory")) {
+      params.set("directory", directory);
+    }
+    url.search = params.toString();
+  } else {
+    url.search = directory ? new URLSearchParams({ directory }).toString() : "";
+  }
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
 
-  const directory = resolveOpencodeDirectory(workspace);
   if (directory) {
     headers.set("x-opencode-directory", directory);
   }
@@ -495,12 +526,7 @@ async function fetchOpencodeJson(config: ServerConfig, workspace: WorkspaceInfo,
   });
 
   const text = await response.text();
-  let json: any = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
+  const json = parseJsonResponse(text);
   if (!response.ok) {
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
       status: response.status,
@@ -560,7 +586,26 @@ async function proxyOpencodeRequest(input: {
     body,
   });
 
-  return response;
+  return sanitizeProxyResponse(response);
+}
+
+/**
+ * Strip hop-by-hop and transport-level headers that Bun's native fetch keeps
+ * in the upstream response even after it has already decoded the body for us.
+ * Without this the browser sees `content-encoding: gzip` on a plain-text
+ * payload and bails out with ERR_CONTENT_DECODING_FAILED, breaking any UI
+ * code that reaches through /opencode/* (including session.create).
+ */
+function sanitizeProxyResponse(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.delete("content-length");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function resolveOpenCodeRouterBaseUrl(): string {
@@ -594,7 +639,7 @@ async function proxyOpenCodeRouterRequest(input: {
       headers,
       body,
     });
-    return response;
+    return sanitizeProxyResponse(response);
   } catch (error) {
     const port = parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT);
     throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host", {
@@ -768,6 +813,15 @@ function resolveToyUiEnabled(): boolean {
   const raw = (process.env.OPENWORK_TOY_UI ?? "").trim().toLowerCase();
   if (!raw) return true;
   return ["1", "true", "yes", "on"].includes(raw);
+}
+
+// Dev-only log sink target. When OPENWORK_DEV_LOG_FILE is set to a path, the
+// /dev/log endpoint accepts JSON payloads and appends them to that file so an
+// operator can `tail -f` the file to see live browser activity. Returning null
+// disables the endpoint entirely.
+function resolveDevLogPath(): string | null {
+  const raw = (process.env.OPENWORK_DEV_LOG_FILE ?? "").trim();
+  return raw.length > 0 ? raw : null;
 }
 
 function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
@@ -1154,6 +1208,53 @@ function createRoutes(
     return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
   });
 
+  // Dev log sink: append browser console + error events to a file that an
+  // operator (or an AI driver) can tail. Unauth on purpose because this is
+  // scoped to the dev host and needs to work before clients finish wiring
+  // tokens; it is also a no-op when OPENWORK_DEV_LOG_FILE is unset.
+  addRoute(routes, "POST", "/dev/log", "none", async (ctx) => {
+    const target = resolveDevLogPath();
+    if (!target) {
+      return jsonResponse({ ok: false, reason: "dev_log_disabled" }, 404);
+    }
+    let payload: unknown = null;
+    try {
+      payload = await ctx.request.json();
+    } catch {
+      return jsonResponse({ ok: false, reason: "invalid_json" }, 400);
+    }
+    const entries = Array.isArray(payload) ? payload : [payload];
+    try {
+      await mkdir(dirname(target), { recursive: true });
+      const lines = entries
+        .map((entry) => {
+          try {
+            const stamped = { at: new Date().toISOString(), ...(entry as Record<string, unknown>) };
+            return JSON.stringify(stamped);
+          } catch {
+            return JSON.stringify({ at: new Date().toISOString(), raw: String(entry) });
+          }
+        })
+        .join("\n");
+      await appendFile(target, `${lines}\n`, "utf8");
+    } catch (error) {
+      return jsonResponse({ ok: false, reason: error instanceof Error ? error.message : String(error) }, 500);
+    }
+    return jsonResponse({ ok: true, count: entries.length });
+  });
+
+  addRoute(routes, "GET", "/dev/log", "none", async () => {
+    // Probe response: always 200 so the client's capability probe doesn't
+    // log a noisy "Failed to load resource: 404" in the browser console
+    // when the sink is simply disabled. Clients should key on `ok` + `reason`
+    // in the body, not on HTTP status.
+    const target = resolveDevLogPath();
+    if (!target) {
+      return jsonResponse({ ok: false, reason: "dev_log_disabled" });
+    }
+    return jsonResponse({ ok: true, path: target });
+  });
+
   addRoute(routes, "GET", "/ui", "none", async () => {
     if (!resolveToyUiEnabled()) {
       throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
@@ -1521,6 +1622,51 @@ function createRoutes(
     return jsonResponse({ items });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/sessions", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const items = await listWorkspaceSessions(config, workspace, {
+      roots: parseOptionalBoolean(ctx.url.searchParams.get("roots"), "roots"),
+      start: parseOptionalNonNegativeInteger(ctx.url.searchParams.get("start"), "start"),
+      search: ctx.url.searchParams.get("search")?.trim() || undefined,
+      limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+    });
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const item = await readWorkspaceSession(config, workspace, sessionId);
+    return jsonResponse({ item });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/messages", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const items = await readWorkspaceSessionMessages(config, workspace, sessionId, {
+      limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+    });
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/snapshot", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const item = await readWorkspaceSessionSnapshot(config, workspace, sessionId, {
+      limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+    });
+    return jsonResponse({ item });
+  });
+
   addRoute(routes, "DELETE", "/workspace/:id/sessions/:sessionId", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
@@ -1610,32 +1756,17 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     await resolveWorkspace(config, ctx.params.id);
 
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
-    const apply = await tryFetchOpenCodeRouterHealth("GET", "/health", {
-      port,
-      requestHost,
-      timeoutMs: 2_000,
-    });
+    const apply = await tryFetchOpenCodeRouterHealth("GET", "/health", { timeoutMs: 2_000 });
 
     if (apply.applied && apply.body && typeof apply.body === "object") {
       return jsonResponse(apply.body, apply.status ?? 200);
     }
 
     if (apply.applied) {
-      throw new ApiError(502, "opencodeRouter_invalid_health", "OpenCodeRouter returned an invalid health response", {
-        port,
-        host: apply.host ?? null,
-        hosts: apply.hosts,
-      });
+      throw new ApiError(502, "opencodeRouter_invalid_health", "OpenCodeRouter returned an invalid health response");
     }
 
-    throw new ApiError(apply.status ?? 503, "opencodeRouter_unreachable", apply.error ?? "OpenCodeRouter health unavailable", {
-      port,
-      host: apply.host ?? null,
-      hosts: apply.hosts,
-    });
+    throw new ApiError(apply.status ?? 503, "opencodeRouter_unreachable", apply.error ?? "OpenCodeRouter health unavailable");
   });
 
   addRoute(routes, "POST", "/workspace/:id/opencode-router/telegram-token", "client", async (ctx) => {
@@ -1644,14 +1775,10 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const token = typeof body.token === "string" ? body.token.trim() : "";
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
     logOpenCodeRouterDebug("telegram-token:request", {
       workspaceId: workspace.id,
       actor: ctx.actor?.type ?? "unknown",
       hasToken: Boolean(token),
-      healthPort: healthPort ?? null,
-      requestHost,
     });
     if (!token) {
       throw new ApiError(400, "token_required", "Telegram token is required");
@@ -1667,11 +1794,10 @@ function createRoutes(
     const identityId = normalizeOpenCodeRouterIdentityId(workspace.id);
     await persistOpenCodeRouterTelegramIdentity({ id: identityId, token, enabled: true, directory: workspace.path });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/identities/telegram",
       { id: identityId, token, enabled: true, directory: workspace.path },
-      { port, requestHost, timeoutMs: 3_000 },
+      { timeoutMs: 3_000 },
     );
 
     const result: Record<string, unknown> = {
@@ -1744,8 +1870,6 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     const enabled = body.enabled === true || body.enabled === "true";
     const clearToken = body.clearToken === true || body.clearToken === "true";
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
 
     await requireApproval(ctx, {
       workspaceId: workspace.id,
@@ -1786,15 +1910,11 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     const botToken = typeof body.botToken === "string" ? body.botToken.trim() : "";
     const appToken = typeof body.appToken === "string" ? body.appToken.trim() : "";
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
     logOpenCodeRouterDebug("slack-tokens:request", {
       workspaceId: workspace.id,
       actor: ctx.actor?.type ?? "unknown",
       hasBotToken: Boolean(botToken),
       hasAppToken: Boolean(appToken),
-      healthPort: healthPort ?? null,
-      requestHost,
     });
     if (!botToken || !appToken) {
       throw new ApiError(400, "token_required", "Slack botToken and appToken are required");
@@ -1810,11 +1930,10 @@ function createRoutes(
     const identityId = normalizeOpenCodeRouterIdentityId(workspace.id);
     await persistOpenCodeRouterSlackIdentity({ id: identityId, botToken, appToken, enabled: true, directory: workspace.path });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/identities/slack",
       { id: identityId, botToken, appToken, enabled: true, directory: workspace.path },
-      { port, requestHost, timeoutMs: 3_000 },
+      { timeoutMs: 3_000 },
     );
 
     const result: Record<string, unknown> = {
@@ -1872,15 +1991,7 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
 
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
-
-    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/telegram", {
-      port,
-      requestHost,
-      timeoutMs: 2_000,
-    });
+    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/telegram", { timeoutMs: 2_000 });
 
     if (apply.applied && apply.body && typeof apply.body === "object") {
       const payload = apply.body as Record<string, unknown>;
@@ -1963,8 +2074,6 @@ function createRoutes(
     if (identityId === "env") {
       throw new ApiError(400, "invalid_identity", "Identity id 'env' is reserved");
     }
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
     if (!token) {
       throw new ApiError(400, "token_required", "Telegram token is required");
     }
@@ -1985,7 +2094,6 @@ function createRoutes(
       ...(access === "private" ? { pairingCodeHash } : {}),
     });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/identities/telegram",
       {
@@ -1996,7 +2104,7 @@ function createRoutes(
         access,
         ...(access === "private" ? { pairingCodeHash } : {}),
       },
-      { port, requestHost, timeoutMs: 3_000 },
+      { timeoutMs: 3_000 },
     );
 
     const response: Record<string, unknown> = {
@@ -2075,17 +2183,10 @@ function createRoutes(
     });
 
     const deleted = await deleteOpenCodeRouterTelegramIdentity(identityId);
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
     const apply = await tryFetchOpenCodeRouterHealth(
       "DELETE",
       `/identities/telegram/${encodeURIComponent(identityId)}`,
-      {
-        port,
-        requestHost,
-        timeoutMs: 3_000,
-      },
+      { timeoutMs: 3_000 },
     );
 
     const response: Record<string, unknown> = {
@@ -2126,15 +2227,7 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
 
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
-
-    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/slack", {
-      port,
-      requestHost,
-      timeoutMs: 2_000,
-    });
+    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/slack", { timeoutMs: 2_000 });
 
     if (apply.applied && apply.body && typeof apply.body === "object") {
       const payload = apply.body as Record<string, unknown>;
@@ -2194,8 +2287,6 @@ function createRoutes(
     if (identityId === "env") {
       throw new ApiError(400, "invalid_identity", "Identity id 'env' is reserved");
     }
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
     if (!botToken || !appToken) {
       throw new ApiError(400, "token_required", "Slack botToken and appToken are required");
     }
@@ -2209,11 +2300,10 @@ function createRoutes(
 
     await persistOpenCodeRouterSlackIdentity({ id: identityId, botToken, appToken, enabled, directory: workspace.path });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/identities/slack",
       { id: identityId, botToken, appToken, enabled, directory: workspace.path },
-      { port, requestHost, timeoutMs: 3_000 },
+      { timeoutMs: 3_000 },
     );
 
     const response: Record<string, unknown> = {
@@ -2275,17 +2365,10 @@ function createRoutes(
     });
 
     const deleted = await deleteOpenCodeRouterSlackIdentity(identityId);
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
     const apply = await tryFetchOpenCodeRouterHealth(
       "DELETE",
       `/identities/slack/${encodeURIComponent(identityId)}`,
-      {
-        port,
-        requestHost,
-        timeoutMs: 3_000,
-      },
+      { timeoutMs: 3_000 },
     );
 
     const response: Record<string, unknown> = {
@@ -2325,9 +2408,6 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
 
     const search = new URLSearchParams();
     const channel = (ctx.url.searchParams.get("channel") ?? "").trim();
@@ -2346,15 +2426,11 @@ function createRoutes(
     const suffix = search.toString();
     const pathname = suffix ? `/bindings?${suffix}` : "/bindings";
 
-    const apply = await tryFetchOpenCodeRouterHealth("GET", pathname, { port, requestHost, timeoutMs: 2_000 });
+    const apply = await tryFetchOpenCodeRouterHealth("GET", pathname, { timeoutMs: 2_000 });
     if (apply.applied && apply.body && typeof apply.body === "object") {
       return jsonResponse(apply.body);
     }
-    throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host", {
-      port,
-      error: apply.error,
-      status: apply.status,
-    });
+    throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host");
   });
 
   addRoute(routes, "POST", "/workspace/:id/opencode-router/bindings", "client", async (ctx) => {
@@ -2377,8 +2453,6 @@ function createRoutes(
     const identityId = workspaceIdentityId;
     const peerId = typeof body.peerId === "string" ? body.peerId.trim() : "";
     const directory = typeof body.directory === "string" ? body.directory.trim() : "";
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
 
     if (channel !== "telegram" && channel !== "slack") {
       throw new ApiError(400, "invalid_channel", "channel must be 'telegram' or 'slack'");
@@ -2399,20 +2473,15 @@ function createRoutes(
       paths: [resolveOpenCodeRouterConfigPath()],
     });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const payload: Record<string, unknown> = {
       channel,
       identityId,
       peerId,
       ...(directory ? { directory } : {}),
     };
-    const apply = await tryPostOpenCodeRouterHealth("/bindings", payload, { port, requestHost, timeoutMs: 3_000 });
+    const apply = await tryPostOpenCodeRouterHealth("/bindings", payload, { timeoutMs: 3_000 });
     if (!apply.applied) {
-      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not apply binding update", {
-        port,
-        error: apply.error,
-        status: apply.status,
-      });
+      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not apply binding update");
     }
 
     await recordAudit(workspace.path, {
@@ -2442,8 +2511,6 @@ function createRoutes(
     const autoBind = body.autoBind === true || body.autoBind === "true";
     const directoryInput = typeof body.directory === "string" ? body.directory.trim() : "";
     const directory = directoryInput || workspace.path;
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
 
     const identityIdParam = typeof body.identityId === "string" ? body.identityId.trim() : "";
     const requestedId = identityIdParam ? normalizeOpenCodeRouterIdentityId(identityIdParam) : "";
@@ -2467,7 +2534,6 @@ function createRoutes(
       throw new ApiError(400, "text_required", "text is required");
     }
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/send",
       {
@@ -2478,15 +2544,11 @@ function createRoutes(
         ...(autoBind ? { autoBind: true } : {}),
         text,
       },
-      { port, requestHost, timeoutMs: 5_000 },
+      { timeoutMs: 5_000 },
     );
 
     if (!apply.applied) {
-      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not send the message", {
-        port,
-        error: apply.error,
-        status: apply.status,
-      });
+      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not send the message");
     }
 
     await recordAudit(workspace.path, {
@@ -3581,7 +3643,8 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const exportPayload = await exportWorkspace(workspace);
+    const sensitiveMode = parseWorkspaceExportSensitiveMode(ctx.url.searchParams.get("sensitive"));
+    const exportPayload = await exportWorkspace(workspace, { sensitiveMode });
     return jsonResponse(exportPayload);
   });
 
@@ -3637,11 +3700,17 @@ function createRoutes(
   addRoute(routes, "POST", "/share/bundles/publish", "client", async (ctx) => {
     requireClientScope(ctx, "viewer");
     const body = await readJsonBody(ctx.request);
+    if (typeof body.baseUrl === "string" && body.baseUrl.trim()) {
+      throw new ApiError(
+        400,
+        "publisher_base_url_forbidden",
+        "Bundle publishing always uses the configured OpenWork publisher. Remove baseUrl from the request.",
+      );
+    }
     const result = await publishSharedBundle({
       payload: body.payload,
       bundleType: String(body.bundleType ?? "").trim(),
       name: typeof body.name === "string" ? body.name : undefined,
-      baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
       timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
     });
     return jsonResponse(result);
@@ -3653,7 +3722,7 @@ function createRoutes(
     const bundle = await fetchSharedBundle(body.bundleUrl, {
       timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
     });
-    return jsonResponse(bundle);
+  return jsonResponse(bundle);
   });
 
   addRoute(routes, "GET", "/approvals", "host", async (ctx) => {
@@ -3671,6 +3740,125 @@ function createRoutes(
   });
 
   return routes;
+}
+
+function remapSessionReadError(error: unknown): never {
+  if (error instanceof ApiError && error.code === "opencode_request_failed") {
+    const details = error.details;
+    const upstreamStatus =
+      details && typeof details === "object" && "status" in details ? Number((details as { status?: unknown }).status) : NaN;
+    if (upstreamStatus === 400) {
+      throw new ApiError(400, "invalid_query", "OpenCode rejected the session read request", details);
+    }
+    if (upstreamStatus === 404) {
+      throw new ApiError(404, "session_not_found", "Session not found", details);
+    }
+  }
+  throw error;
+}
+
+async function listWorkspaceSessions(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  input: { roots?: boolean; start?: number; search?: string; limit?: number },
+) {
+  try {
+    return buildSessionList(
+      await fetchOpencodeJson(config, workspace, "/session", {
+        method: "GET",
+        query: {
+          roots: input.roots,
+          start: input.start,
+          search: input.search,
+          limit: input.limit,
+        },
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSession(config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) {
+  try {
+    return buildSession(
+      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
+        method: "GET",
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSessionMessages(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+  input: { limit?: number },
+) {
+  try {
+    return buildSessionMessages(
+      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/message`, {
+        method: "GET",
+        query: { limit: input.limit },
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSessionTodos(config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) {
+  try {
+    return buildSessionTodos(
+      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/todo`, {
+        method: "GET",
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSessionStatuses(config: ServerConfig, workspace: WorkspaceInfo) {
+  try {
+    return buildSessionStatuses(
+      await fetchOpencodeJson(config, workspace, "/session/status", {
+        method: "GET",
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSessionSnapshot(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+  input: { limit?: number },
+) {
+  try {
+    const [session, messages, todos, statuses] = await Promise.all([
+      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
+        method: "GET",
+      }),
+      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/message`, {
+        method: "GET",
+        query: { limit: input.limit },
+      }),
+      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/todo`, {
+        method: "GET",
+      }),
+      fetchOpencodeJson(config, workspace, "/session/status", {
+        method: "GET",
+      }),
+    ]);
+    return buildSessionSnapshot({ session, messages, todos, statuses });
+  } catch (error) {
+    remapSessionReadError(error);
+  }
 }
 
 async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
@@ -3736,6 +3924,32 @@ function parseInteger(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseOptionalPositiveInteger(value: string | null, name: string): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new ApiError(400, "invalid_query", `${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parseOptionalNonNegativeInteger(value: string | null, name: string): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new ApiError(400, "invalid_query", `${name} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parseOptionalBoolean(value: string | null, name: string): boolean | undefined {
+  if (value === null) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new ApiError(400, "invalid_query", `${name} must be a boolean`);
+}
+
 function expandHome(value: string): string {
   if (value.startsWith("~/")) {
     return join(homedir(), value.slice(2));
@@ -3762,13 +3976,6 @@ function parseJsonResponse(text: string): unknown {
   } catch {
     return trimmed;
   }
-}
-
-function normalizeHealthPort(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const port = Math.trunc(value);
-  if (port <= 0 || port > 65535) return null;
-  return port;
 }
 
 type OpenCodeRouterConfigFile = Record<string, unknown> & {
@@ -4405,188 +4612,137 @@ async function deleteOpenCodeRouterSlackIdentity(idRaw: string): Promise<boolean
 
 type OpenCodeRouterApplyAttempt = {
   applied: boolean;
-  port: number;
-  hosts: string[];
-  host?: string;
+  baseUrl: string;
   status?: number;
   error?: string;
   body?: unknown;
 };
 
+function buildOpenCodeRouterHealthUrl(pathname: string): { baseUrl: string; url: string } {
+  const baseUrl = resolveOpenCodeRouterBaseUrl();
+  const url = new URL(pathname, `${baseUrl}/`);
+  return { baseUrl, url: url.toString() };
+}
+
 async function tryPostOpenCodeRouterHealth(
   pathname: string,
   payload: unknown,
-  options: { port: number; requestHost?: string | null; timeoutMs: number },
+  options: { timeoutMs: number },
 ): Promise<OpenCodeRouterApplyAttempt> {
-  const candidates = Array.from(
-    new Set(
-      ["127.0.0.1", options.requestHost].filter(
-        (host): host is string => Boolean(host && host.trim()),
-      ),
-    ),
-  );
-  const port = options.port;
+  const { baseUrl, url } = buildOpenCodeRouterHealthUrl(pathname);
 
-  let lastError: OpenCodeRouterApplyAttempt | null = null;
-  for (const host of candidates) {
-    const url = `http://${host}:${port}${pathname}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
 
-      const text = await response.text();
-      const parsed = parseJsonResponse(text);
+    const text = await response.text();
+    const parsed = parseJsonResponse(text);
 
-      if (response.ok) {
-        return {
-          applied: true,
-          port,
-          hosts: candidates,
-          host,
-          status: response.status,
-          body: parsed,
-        };
-      }
-
-      const detail =
-        typeof parsed === "object" && parsed && "error" in parsed
-          ? String((parsed as Record<string, unknown>).error)
-          : response.statusText || "OpenCodeRouter request failed";
-      lastError = {
-        applied: false,
-        port,
-        hosts: candidates,
-        host,
+    if (response.ok) {
+      return {
+        applied: true,
+        baseUrl,
         status: response.status,
-        error: detail,
         body: parsed,
       };
-    } catch (error) {
-      clearTimeout(timer);
-      const message =
-        error instanceof Error && error.name === "AbortError"
-          ? `Timeout after ${options.timeoutMs}ms`
-          : String(error);
-      lastError = {
-        applied: false,
-        port,
-        hosts: candidates,
-        host,
-        error: message,
-      };
     }
-  }
 
-  return (
-    lastError ?? {
+    const detail =
+      typeof parsed === "object" && parsed && "error" in parsed
+        ? String((parsed as Record<string, unknown>).error)
+        : response.statusText || "OpenCodeRouter request failed";
+    return {
       applied: false,
-      port,
-      hosts: candidates,
-      error: "OpenCodeRouter health server is unavailable",
-    }
-  );
+      baseUrl,
+      status: response.status,
+      error: detail,
+      body: parsed,
+    };
+  } catch (error) {
+    clearTimeout(timer);
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? `Timeout after ${options.timeoutMs}ms`
+        : String(error);
+    return {
+      applied: false,
+      baseUrl,
+      error: message,
+    };
+  }
 }
 
 async function tryFetchOpenCodeRouterHealth(
   method: "GET" | "DELETE",
   pathname: string,
-  options: { port: number; requestHost?: string | null; timeoutMs: number },
+  options: { timeoutMs: number },
 ): Promise<OpenCodeRouterApplyAttempt> {
-  const candidates = Array.from(
-    new Set(
-      ["127.0.0.1", options.requestHost].filter(
-        (host): host is string => Boolean(host && host.trim()),
-      ),
-    ),
-  );
-  const port = options.port;
+  const { baseUrl, url } = buildOpenCodeRouterHealthUrl(pathname);
 
-  let lastError: OpenCodeRouterApplyAttempt | null = null;
-  for (const host of candidates) {
-    const url = `http://${host}:${port}${pathname}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-    try {
-      const response = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
 
-      const text = await response.text();
-      const parsed = parseJsonResponse(text);
+    const text = await response.text();
+    const parsed = parseJsonResponse(text);
 
-      if (response.ok) {
-        return {
-          applied: true,
-          port,
-          hosts: candidates,
-          host,
-          status: response.status,
-          body: parsed,
-        };
-      }
-
-      const detail =
-        typeof parsed === "object" && parsed && "error" in parsed
-          ? String((parsed as Record<string, unknown>).error)
-          : response.statusText || "OpenCodeRouter request failed";
-      lastError = {
-        applied: false,
-        port,
-        hosts: candidates,
-        host,
+    if (response.ok) {
+      return {
+        applied: true,
+        baseUrl,
         status: response.status,
-        error: detail,
         body: parsed,
       };
-    } catch (error) {
-      clearTimeout(timer);
-      const message =
-        error instanceof Error && error.name === "AbortError"
-          ? `Timeout after ${options.timeoutMs}ms`
-          : String(error);
-      lastError = {
-        applied: false,
-        port,
-        hosts: candidates,
-        host,
-        error: message,
-      };
     }
-  }
 
-  return (
-    lastError ?? {
+    const detail =
+      typeof parsed === "object" && parsed && "error" in parsed
+        ? String((parsed as Record<string, unknown>).error)
+        : response.statusText || "OpenCodeRouter request failed";
+    return {
       applied: false,
-      port,
-      hosts: candidates,
-      error: "OpenCodeRouter health server is unavailable",
-    }
-  );
+      baseUrl,
+      status: response.status,
+      error: detail,
+      body: parsed,
+    };
+  } catch (error) {
+    clearTimeout(timer);
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? `Timeout after ${options.timeoutMs}ms`
+        : String(error);
+    return {
+      applied: false,
+      baseUrl,
+      error: message,
+    };
+  }
 }
 
 async function updateOpenCodeRouterTelegramToken(
   token: string,
-  healthPortOverride?: number | null,
-  requestHost?: string | null,
 ): Promise<Record<string, unknown>> {
   // Always persist first so the token is saved even if opencodeRouter is offline.
   await persistOpenCodeRouterTelegramToken(token);
 
-  const port = healthPortOverride ?? resolveOpenCodeRouterHealthPort();
   const apply = await tryPostOpenCodeRouterHealth(
     "/config/telegram-token",
     { token },
-    { port, requestHost, timeoutMs: 3_000 },
+    { timeoutMs: 3_000 },
   );
 
   const response: Record<string, unknown> = {
@@ -4667,16 +4823,13 @@ async function fetchRuntimeControl(path: string, init?: { method?: string; body?
 async function updateOpenCodeRouterSlackTokens(
   botToken: string,
   appToken: string,
-  healthPortOverride?: number | null,
-  requestHost?: string | null,
 ): Promise<Record<string, unknown>> {
   await persistOpenCodeRouterSlackTokens(botToken, appToken);
 
-  const port = healthPortOverride ?? resolveOpenCodeRouterHealthPort();
   const apply = await tryPostOpenCodeRouterHealth(
     "/config/slack-tokens",
     { botToken, appToken },
-    { port, requestHost, timeoutMs: 3_000 },
+    { timeoutMs: 3_000 },
   );
 
   const response: Record<string, unknown> = {
@@ -4809,12 +4962,31 @@ async function requireApproval(
   }
 }
 
-async function exportWorkspace(workspace: WorkspaceInfo) {
-  const opencode = sanitizePortableOpencodeConfig(await readOpencodeConfig(workspace.path));
+async function exportWorkspace(
+  workspace: WorkspaceInfo,
+  options?: { sensitiveMode?: WorkspaceExportSensitiveMode },
+) {
+  const sensitiveMode = options?.sensitiveMode ?? "auto";
+  const rawOpencode = await readOpencodeConfig(workspace.path);
+  let opencode = sanitizePortableOpencodeConfig(rawOpencode);
   const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfig(workspace.path));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
-  const files = await listPortableFiles(workspace.path);
+  let files = await listPortableFiles(workspace.path);
+  const warnings = collectWorkspaceExportWarnings({ opencode: rawOpencode, files });
+  if (warnings.length && sensitiveMode === "auto") {
+    throw new ApiError(
+      409,
+      "workspace_export_requires_decision",
+      "This workspace includes sensitive config. Choose whether to exclude it or include it before exporting.",
+      { warnings },
+    );
+  }
+  if (sensitiveMode === "exclude") {
+    const sanitized = stripSensitiveWorkspaceExportData({ opencode, files });
+    opencode = sanitized.opencode;
+    files = sanitized.files;
+  }
   const skillContents = await Promise.all(
     skills.map(async (skill) => ({
       name: skill.name,
@@ -4839,6 +5011,15 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
     commands: commandContents,
     ...(files.length ? { files } : {}),
   };
+}
+
+function parseWorkspaceExportSensitiveMode(input: string | null): WorkspaceExportSensitiveMode {
+  const trimmed = (input ?? "").trim();
+  if (!trimmed) return "auto";
+  if (trimmed === "auto" || trimmed === "include" || trimmed === "exclude") {
+    return trimmed;
+  }
+  throw new ApiError(400, "invalid_workspace_export_sensitive_mode", `Invalid workspace export sensitive mode: ${trimmed}`);
 }
 
 async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>): Promise<void> {
@@ -4944,7 +5125,8 @@ async function materializeBlueprintSessions(config: ServerConfig, workspace: Wor
       method: "POST",
       body: template.title ? { title: template.title } : undefined,
     });
-    const sessionId = typeof result?.id === "string" ? result.id.trim() : "";
+    const sessionId =
+      result && typeof result === "object" && "id" in result && typeof result.id === "string" ? result.id.trim() : "";
     if (!sessionId) {
       throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
     }

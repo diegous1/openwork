@@ -1,6 +1,6 @@
 import { parse } from "jsonc-parser";
 
-import type { OpencodeConfigFile } from "../lib/tauri";
+import type { OpencodeConfigFile } from "../lib/desktop";
 
 type PluginListValue = string | string[] | null | undefined;
 
@@ -76,11 +76,6 @@ export function loadPluginsFromConfig(
     onList([]);
     onError(e instanceof Error ? e.message : "Failed to parse opencode.json");
   }
-}
-
-export function parsePluginsFromConfig(config: OpencodeConfigFile | null) {
-  if (!config?.content) return [] as string[];
-  return parsePluginListFromContent(config.content);
 }
 
 export function parsePluginListFromContent(content: string) {

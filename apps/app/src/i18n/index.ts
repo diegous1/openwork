@@ -1,21 +1,24 @@
-import { createSignal, createRoot } from "solid-js";
 import en from "./locales/en";
 import ja from "./locales/ja";
 import zh from "./locales/zh";
 import vi from "./locales/vi";
 import ptBR from "./locales/pt-BR";
+import th from "./locales/th";
+import fr from "./locales/fr";
+import ca from "./locales/ca";
+import es from "./locales/es";
 import { LANGUAGE_PREF_KEY } from "../app/constants";
 
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es"];
 
 /**
  * Language options for UI - single source of truth
@@ -26,6 +29,10 @@ export const LANGUAGE_OPTIONS = [
   { value: "zh" as Language, label: "简体中文", nativeName: "简体中文" },
   { value: "vi" as Language, label: "Vietnamese", nativeName: "Tiếng Việt" },
   { value: "pt-BR" as Language, label: "Portuguese (BR)", nativeName: "Português (BR)" },
+  { value: "th" as Language, label: "ไทย", nativeName: "ไทย" },
+  { value: "fr" as Language, label: "French", nativeName: "Français" },
+  { value: "ca" as Language, label: "Català", nativeName: "Català" },
+  { value: "es" as Language, label: "Español", nativeName: "Español" },
 ] as const;
 
 /**
@@ -36,7 +43,11 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   ja,
   zh,
   vi,
-    "pt-BR": ptBR,
+  "pt-BR": ptBR,
+  th,
+  fr,
+  ca,
+  es,
 };
 
 /**
@@ -47,15 +58,15 @@ export const isLanguage = (value: unknown): value is Language => {
   return typeof value === "string" && LANGUAGES.includes(value as Language);
 };
 
-/**
- * Create root-level locale signal with persistence
- */
-const [locale, setLocaleSignal] = createRoot(() => createSignal<Language>("en"));
+let localeValue: Language = "en";
 
 /**
  * Get current locale
  */
 export const currentLocale = (): Language => locale();
+function locale(): Language {
+  return localeValue;
+}
 
 /**
  * Set locale and persist to localStorage
@@ -66,7 +77,7 @@ export const setLocale = (newLocale: Language) => {
     newLocale = "en";
   }
 
-  setLocaleSignal(newLocale);
+  localeValue = newLocale;
 
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("lang", newLocale);
@@ -90,22 +101,30 @@ export const setLocale = (newLocale: Language) => {
  * @param localeOverride - Optional locale override (defaults to current locale)
  * @returns Translated string or fallback
  */
-export const t = (key: string, localeOverride?: Language): string => {
+export const t = (key: string, localeOverride?: Language, params?: Record<string, string | number>): string => {
   const loc = localeOverride ?? locale();
 1
 
   // Try target language first
+  let result: string;
   if (TRANSLATIONS[loc]?.[key]) {
-    return TRANSLATIONS[loc][key];
+    result = TRANSLATIONS[loc][key];
+  } else if (loc !== "en" && TRANSLATIONS.en?.[key]) {
+    // Fallback to English
+    result = TRANSLATIONS.en[key];
+  } else {
+    // Final fallback to key itself (prevents raw keys from showing in UI)
+    return key;
   }
 
-  // Fallback to English
-  if (loc !== "en" && TRANSLATIONS.en?.[key]) {
-    return TRANSLATIONS.en[key];
+  // Replace params if provided
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      result = result.replace(`{${k}}`, String(v));
+    }
   }
 
-  // Final fallback to key itself (prevents raw keys from showing in UI)
-  return key;
+  return result;
 };
 
 /**
@@ -120,7 +139,7 @@ export const initLocale = (): Language => {
   try {
     const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
     if (isLanguage(stored)) {
-      setLocaleSignal(stored);
+      localeValue = stored;
       if (typeof document !== "undefined") {
         document.documentElement.setAttribute("lang", stored);
       }
