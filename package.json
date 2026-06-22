@@ -48,7 +48,7 @@
     "tauri": "pnpm --filter @openwork/desktop exec tauri"
   },
   "devDependencies": {
-    "turbo": "^2.5.5"
+    "turbo": "^2.9.14"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

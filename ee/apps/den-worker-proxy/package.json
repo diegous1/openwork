@@ -15,7 +15,7 @@
     "@daytonaio/sdk": "^0.150.0",
     "@hono/node-server": "^1.13.8",
     "dotenv": "^16.4.5",
-    "hono": "^4.7.2",
+    "hono": "^4.12.25",
     "zod": "^4.3.6"
   },
   "devDependencies": {
